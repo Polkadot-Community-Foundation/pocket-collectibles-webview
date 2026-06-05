@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+*.local
+
+# Vite / tooling caches
+.vite
+
+# Deploy
+.vercel
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# Env
+.env
+.env.*
+!.env.example
+
+# AI tool session / local state
+.claude/sessions/
+.claude/cache/
+settings.local.json
+.cursor/
+.aider*
+.codeium/

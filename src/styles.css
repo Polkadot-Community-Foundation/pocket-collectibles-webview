@@ -1,0 +1,715 @@
+/* ============================================================
+   Collectibles catalogue — webview styles.
+   Shares the game-results design language: dark radial space
+   background, blue/purple accent, gold for rares, Mulish titles
+   + Inter UI. Mobile-first; flattens to fill a native WebView.
+   ============================================================ */
+
+/* ---------- Base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    system-ui, sans-serif;
+  color: #fff;
+  background: var(--bg-radial);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  /* Top-anchored glow, sized as a % of the element so it scales identically
+     at any viewport height (no elliptical banding / mid-screen "line" on
+     tall mobile screens — the glow stays at the top and fades to dark).
+     Kept dark and near-neutral so each item's own colour glow carries the
+     hue — an ethereal black space, not a "blue app background". */
+  --bg-radial:
+    radial-gradient(ellipse 130% 72% at 50% 0%, #16131e 0%, #0a0911 52%, #050409 100%);
+  --accent: #5163f5;
+  --accent-bright: #7686ff;
+  --accent-deep: #2c25b0;
+  --accent-glow: rgba(81, 99, 245, 0.5);
+  --cyan: #00d4ff;
+  --gold: #ffca28;
+  --gold-deep: #ffd700;
+  --gold-glow: rgba(255, 202, 40, 0.55);
+  --ink-1: rgba(255, 255, 255, 0.95);
+  --ink-2: rgba(225, 222, 245, 0.66);
+  --ink-3: rgba(210, 208, 235, 0.42);
+  --line: rgba(255, 255, 255, 0.08);
+  --surface: rgba(28, 26, 54, 0.55);
+  --surface-2: rgba(40, 36, 78, 0.5);
+  --font-title: "Mulish", -apple-system, "SF Pro Display", system-ui, sans-serif;
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Courier New", monospace;
+}
+
+img { display: block; user-select: none; -webkit-user-drag: none; }
+button {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- Layout: mobile-first, full-bleed ----------
+   The default is the REAL view — the app fills the whole viewport, exactly
+   as it appears on a device or inside the native WebView. The centered
+   "phone frame" mockup is purely a desktop-preview convenience and is
+   layered back on only for mouse-driven desktop screens (see the media
+   query at the bottom of this section). */
+.page {
+  position: fixed; inset: 0;
+  display: block;
+}
+.phone-frame {
+  position: fixed; inset: 0;
+  z-index: 1;
+  width: auto; height: auto;
+  overflow: hidden;
+  background: var(--bg-radial);
+  contain: layout paint;
+}
+/* Fake status bar / notch belong only to the desktop mockup — hidden by
+   default so real devices use their own system status bar + safe-area. */
+.phone-status-bar {
+  display: none;
+  position: absolute; top: 0; left: 0; right: 0; height: 48px;
+  align-items: center; justify-content: space-between;
+  padding: 14px 24px 0 28px;
+  z-index: 30;
+  font-size: 15px; font-weight: 600; letter-spacing: 0.2px;
+  color: #fff;
+  pointer-events: none;
+}
+.phone-notch {
+  width: 110px; height: 28px; background: #000;
+  border-radius: 16px;
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%);
+}
+.phone-status-icons { display: inline-flex; align-items: center; gap: 4px; }
+.bar-dot { width: 5px; height: 5px; border-radius: 50%; background: #fff; box-shadow: 8px 0 0 #fff, 16px 0 0 rgba(255,255,255,.6); }
+.bar-pill { display: inline-block; width: 22px; height: 10px; border-radius: 3px; background: #fff; margin-left: 14px; }
+
+/* ---------- Desktop preview: re-wrap the real view in a phone mockup ----------
+   Only when the primary input is a mouse AND there's room for a full-size
+   phone. Touch devices (phones, tablets) and the native WebView always get
+   the full-bleed view above. `:not(.is-embedded)` keeps an embedded host
+   full-bleed even if it somehow matches (e.g. a desktop dev harness). */
+@media (pointer: fine) and (min-width: 720px) and (min-height: 720px) {
+  body:not(.is-embedded) .page {
+    display: grid; place-items: center;
+  }
+  body:not(.is-embedded) .phone-frame {
+    position: relative; inset: auto;
+    height: min(844px, 94vh);
+    aspect-ratio: 390 / 844;
+    width: auto;
+    border-radius: 5.2%;
+    box-shadow:
+      0 40px 120px rgba(0, 0, 0, 0.6),
+      0 0 0 10px #0c0c10,
+      0 0 0 11px #333;
+  }
+  body:not(.is-embedded) .phone-status-bar { display: flex; }
+  /* Clear the mockup's fake status bar (the real-device padding is smaller
+     and driven by safe-area insets — see .screen). */
+  body:not(.is-embedded) .screen { padding-top: 54px; }
+}
+
+/* ---------- Particle canvas (behind content, inside frame) ----------
+   Explicit width/height are required because <canvas> is a replaced
+   element — with only `inset: 0` it falls back to its intrinsic 300×150
+   default (the canvas would draw into a tiny top-left patch and the
+   ambient particles would be invisible on any larger viewport).
+   The mask carves out the area behind the gallery header so motes only
+   appear over the content below (motes over the title / sort chips read
+   as noise). `--gallery-header-bottom` is set by GalleryScreen via
+   ResizeObserver; defaults to 0 elsewhere (no mask cutoff). */
+.particle-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  --mask: linear-gradient(180deg,
+    transparent 0,
+    transparent calc(var(--gallery-header-bottom, 0px) - 8px),
+    #000 calc(var(--gallery-header-bottom, 0px) + 24px),
+    #000 100%);
+  mask-image: var(--mask);
+  -webkit-mask-image: var(--mask);
+}
+
+/* ---------- Screen base ---------- */
+.screen {
+  position: absolute; inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  /* Real-device top inset: clear the system status bar / notch via the
+     safe-area inset, with a small floor for devices that report none. The
+     desktop mockup overrides this to clear its fake status bar. */
+  padding-top: max(20px, calc(env(safe-area-inset-top, 0px) + 12px));
+}
+
+/* ---------- Boot ---------- */
+.boot-screen {
+  position: absolute; inset: 0;
+  display: grid; place-items: center; gap: 18px;
+  color: var(--ink-2); text-align: center; z-index: 2;
+}
+.boot-mark {
+  font-size: 40px; color: var(--accent);
+  text-shadow: 0 0 22px var(--accent-glow);
+  animation: bootPulse 1.8s ease-in-out infinite;
+}
+.boot-copy {
+  font-family: var(--font-ui); font-size: 12px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+}
+@keyframes bootPulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.1); }
+}
+
+/* ---------- Fatal error fallback (ErrorBoundary) ---------- */
+.fatal-screen {
+  position: fixed; inset: 0;
+  display: grid; place-items: center; align-content: center; gap: 16px;
+  padding: 32px; text-align: center; z-index: 1000;
+  background: var(--bg-radial);
+  color: var(--ink-2);
+}
+.fatal-mark { font-size: 40px; color: var(--ink-3); opacity: 0.7; }
+.fatal-copy {
+  font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
+  max-width: 280px; color: var(--ink-1);
+}
+.fatal-retry {
+  margin-top: 4px;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 10px 20px; border-radius: 999px;
+  color: var(--ink-1);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+}
+
+/* ---------- Gallery header ---------- */
+.gallery { padding-bottom: 0; }
+.gallery-header {
+  flex: 0 0 auto;
+  padding: 6px 22px 14px;
+}
+.gallery-title {
+  margin: 6px 0 0;
+  font-family: var(--font-title);
+  font-weight: 900;
+  /* Fluid so ~11-char handles (byteboro.42) sit large on one line while
+     a max-length 24-char handle scales down instead of overflowing. */
+  font-size: clamp(23px, 7.5vw, 30px);
+  line-height: 1.04;
+  letter-spacing: -0.01em;
+  /* Handles have no spaces — allow a break as the last-resort safety net
+     for the longest names rather than spilling off the edge. */
+  overflow-wrap: anywhere;
+  background: linear-gradient(180deg, #fff 0%, #cfc9ff 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.gallery-stats {
+  margin-top: 8px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--ink-2);
+}
+.stat-count { color: var(--ink-1); font-weight: 600; }
+.stat-count > span { font-variant-numeric: tabular-nums; }
+.stat-dot { color: var(--ink-3); }
+.stat-rare { color: var(--gold); font-weight: 600; }
+
+/* ---------- Sort chips ---------- */
+.sort-row {
+  margin-top: 14px;
+  display: inline-flex; gap: 6px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.sort-chip {
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 7px 14px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  transition: color 0.2s ease, background 0.25s ease;
+}
+.sort-chip.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+  box-shadow: 0 4px 14px rgba(81, 99, 245, 0.45);
+}
+
+/* ---------- Gallery grid ---------- */
+.gallery-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 4px 18px calc(env(safe-area-inset-bottom, 0px) + 28px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 24px), transparent 100%);
+  /* Establish a query container so column count tracks the FRAME width,
+     not the browser window — the desktop preview then matches a real
+     phone instead of cramming extra columns into the narrow frame. */
+  container-type: inline-size;
+  container-name: gallery;
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  padding-top: 12px;
+}
+
+/* ---------- Tile ---------- */
+.tile {
+  display: flex; flex-direction: column;
+  /* min-width: 0 keeps the two 1fr grid tracks equal. Without it the grid
+     item's min-content width — set by the `white-space: nowrap` .tile-name —
+     can blow one column wider and squeeze the other (right tiles smaller). */
+  min-width: 0;
+  text-align: left;
+  border-radius: 18px;
+  will-change: transform, opacity;
+}
+.tile-frame {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 18px;
+  overflow: hidden;
+  /* Dark, near-neutral cell so the colour-matched glow carries the hue and
+     the item reads as floating in space — no border, no card, no shadow. */
+  background: radial-gradient(circle at 50% 48%, #15141d 0%, #0a0910 70%, #07060c 100%);
+  transition: transform 0.18s ease;
+}
+.tile:active .tile-frame { transform: scale(0.96); }
+
+/* Colour-matched glow blob behind the item. `--glow` is set per item from its
+   own pixels (see swatch.ts); the blob is saturated under the item and fades
+   to the dark cell well before the edge, so the item floats. */
+/* Colour-matched glow behind the item. Vertically elongated (taller than
+   wide) and faded to transparent BEFORE the top/bottom edges, so it reads as
+   a soft vertical column of light and never hard-clips against the cell's
+   horizontal borders. `--glow` is set per item from its own pixels. */
+.tile-glow-blob {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 50% 70% at 50% 48%,
+    rgb(var(--glow) / 0.55) 0%,
+    rgb(var(--glow) / 0.30) 28%,
+    rgb(var(--glow) / 0.10) 48%,
+    transparent 66%);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.tile.is-loaded .tile-glow-blob { opacity: 1; }
+
+/* Inset so the item sits "zoomed out" with space around it. */
+.tile-art-wrap {
+  position: absolute; inset: 10%;
+}
+.tile-art {
+  position: relative;
+  display: block;
+  width: 100%; height: 100%;
+  object-fit: contain;       /* whole item, presented as-is — nothing over it */
+  /* No drop shadow, ever — shadows flatten the float into flat UI layers. */
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tile.is-loaded .tile-art { opacity: 1; transform: scale(1); }
+
+/* Soft additive camera-flare BEHIND the item: a copy of the art, very
+   transparent, heavily blurred so its shape dissolves into a colour-matched
+   glow cloud (NOT an edge-tracing rim) and additively lights the backdrop
+   around the floating item. Painted before .tile-art in the DOM, so it never
+   sits over the opaque subject. Tune blur/opacity to taste. */
+.tile-bloom {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  filter: blur(20px);
+  transform: scale(1.06);
+  mix-blend-mode: plus-lighter;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+}
+.tile.is-loaded .tile-bloom { opacity: 0.3; }
+.tile--rare.is-loaded .tile-bloom { opacity: 0.5; }
+
+/* Idle float is a rare-only flourish — common tiles rest still. The flare
+   floats with the art (translate is independent of their transforms). */
+.tile--rare .tile-art,
+.tile--rare .tile-bloom { animation: tileFloat 5s ease-in-out infinite; }
+.tile-art--fallback {
+  display: grid; place-items: center;
+  font-size: 40px; color: var(--ink-3); opacity: 1;
+  animation: none;
+}
+@keyframes tileFloat {
+  0%, 100% { translate: 0 0; }
+  50%      { translate: 0 -4px; }
+}
+
+/* Rare/elite — much brighter glow with a white-hot core. No gold border or
+   holo card: the light alone signals value. */
+.tile--rare .tile-glow-blob {
+  background: radial-gradient(ellipse 52% 70% at 50% 48%,
+    rgb(255 255 255 / 0.42) 0%,
+    rgb(var(--glow) / 0.85) 15%,
+    rgb(var(--glow) / 0.45) 36%,
+    rgb(var(--glow) / 0.16) 52%,
+    transparent 66%);
+}
+.tile-rare-badge {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 3px 7px; border-radius: 7px;
+  color: #2a1c00;
+  background: linear-gradient(180deg, var(--gold-deep), var(--gold));
+  box-shadow: 0 2px 8px rgba(255, 202, 40, 0.4);
+}
+.tile-pending-badge {
+  position: absolute; top: 8px; right: 8px;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.1em;
+  padding: 3px 7px; border-radius: 7px;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
+}
+/* Duplicate count — how many of this same asset the user owns. Bottom-right
+   so it never clashes with the rare (top-left) / pending (top-right) badges. */
+.tile-count-badge {
+  position: absolute; bottom: 8px; right: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 800; letter-spacing: 0.02em;
+  padding: 3px 7px; border-radius: 999px;
+  color: var(--ink-1);
+  background: rgba(10, 9, 16, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.tile--pending .tile-frame { opacity: 0.66; }
+.tile--pending .tile-art { animation: pendingPulse 2.2s ease-in-out infinite; }
+@keyframes pendingPulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 0.95; } }
+
+/* Tile meta */
+.tile-meta { padding: 9px 4px 2px; }
+.tile-name {
+  display: block;
+  font-family: var(--font-title);
+  font-weight: 700; font-size: 14px;
+  color: var(--ink-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tile-sub {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 2px;
+  font-size: 11px; color: var(--ink-3);
+}
+.tile-code { font-family: var(--font-mono); letter-spacing: 0.02em; }
+.tile-when { color: var(--ink-2); }
+
+/* ---------- Empty state ---------- */
+.empty {
+  margin: auto;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 14px; padding: 0 36px 12%; text-align: center;
+}
+.empty-orb {
+  font-size: 64px; color: var(--accent-bright);
+  text-shadow: 0 0 40px var(--accent-glow);
+}
+.empty-copy { max-width: 280px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+
+/* ============================================================
+   Detail view — full-screen overlay above the frame.
+   ============================================================ */
+.detail {
+  /* Absolute, not fixed: clipped to the phone frame in desktop preview and
+     fills the viewport when the frame is flattened (embedded). */
+  position: absolute; inset: 0;
+  z-index: 100;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+/* Backdrop tinted to the current item (`--glow` set on .detail), so the whole
+   view takes on the item's colour rather than a fixed blue. */
+/* Backdrop tinted to the current item, as a tall vertical column of colour
+   (ellipse taller than wide) rather than a wide wash. */
+.detail-backdrop {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 48% 92% at 50% 46%, rgb(var(--glow, 120 134 255) / 0.26), transparent 66%),
+    rgba(6, 5, 12, 0.9);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.detail--rare .detail-backdrop {
+  background:
+    radial-gradient(ellipse 50% 94% at 50% 46%, rgb(var(--glow, 120 134 255) / 0.42), transparent 68%),
+    rgba(6, 5, 12, 0.9);
+}
+.detail-close {
+  position: absolute;
+  top: max(18px, calc(env(safe-area-inset-top, 0px) + 12px));
+  right: 18px;
+  z-index: 4;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  font-size: 26px; line-height: 1; font-weight: 300;
+  color: var(--ink-1);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.detail-counter {
+  position: absolute;
+  top: max(24px, calc(env(safe-area-inset-top, 0px) + 18px));
+  left: 0; right: 0;
+  z-index: 3;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: 0.1em;
+  color: var(--ink-2);
+}
+
+/* Hero stage + tilt */
+.detail-stage {
+  position: relative;
+  z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%;
+  margin-top: -4%;
+}
+.detail-hero {
+  position: relative;
+  /* Relative to the frame (stage width), not the viewport, so it occupies
+     the same share of the screen in preview and on-device. */
+  width: min(74%, 340px);
+  aspect-ratio: 1;
+  /* will-change kept for the open/close FLIP zoom (2D transform). No tilt. */
+  will-change: transform;
+}
+/* Colour-matched glow behind the hero (every item, brighter for rare). */
+.detail-hero-glow {
+  position: absolute; inset: -16%;
+  background: radial-gradient(ellipse 58% 80% at 50% 48%,
+    rgb(var(--glow, 120 134 255) / 0.5) 0%,
+    rgb(var(--glow, 120 134 255) / 0.22) 34%,
+    transparent 64%);
+  filter: blur(10px);
+  z-index: 0;
+}
+.detail-hero.is-rare .detail-hero-glow {
+  background: radial-gradient(ellipse 60% 82% at 50% 48%,
+    rgb(255 255 255 / 0.4) 0%,
+    rgb(var(--glow, 120 134 255) / 0.8) 16%,
+    rgb(var(--glow, 120 134 255) / 0.4) 40%,
+    transparent 70%);
+}
+/* Soft additive camera-flare behind the hero (z-index below the art): a
+   heavily-blurred, transparent copy that dissolves into a colour glow cloud,
+   never an edge rim. Strictly behind the opaque art. */
+.detail-bloom {
+  position: absolute; inset: 0;
+  z-index: 1;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  filter: blur(34px);
+  transform: scale(1.06);
+  mix-blend-mode: plus-lighter;
+  opacity: 0.4;
+  pointer-events: none;
+}
+.detail-hero.is-rare .detail-bloom { opacity: 0.58; }
+.detail-art {
+  position: relative;
+  z-index: 2;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  /* No drop shadow — the hero floats (matches the gallery + mock-ups). */
+}
+
+/* Surface shimmer — rare only. A diagonal highlight band sweeps across,
+   clipped to the gem's own PNG alpha via mask-image (set inline so it
+   matches the current item). Mask sizing mirrors the art's
+   object-fit: contain so the shine aligns exactly with the visible gem. */
+.detail-shimmer {
+  position: absolute; inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  /* Thin, low-opacity highlight band — a glint, not a wash. */
+  background: linear-gradient(115deg,
+    transparent 46%,
+    rgba(255, 255, 255, 0.12) 49%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0.12) 51%,
+    transparent 54%);
+  background-size: 260% 260%;
+  background-repeat: no-repeat;
+  mix-blend-mode: screen;
+  /* Inline maskImage / WebkitMaskImage carry the gem's URL — these props
+     anchor the mask to match `object-fit: contain` on the <img> sibling. */
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  animation: surfaceShimmer 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes surfaceShimmer {
+  0%   { background-position: 130% 50%; opacity: 0; }
+  10%  { opacity: 1; }
+  50%  { background-position: -30% 50%; opacity: 1; }
+  60%  { opacity: 0; }
+  100% { background-position: -30% 50%; opacity: 0; }
+}
+/* Rotating light rays behind rare heroes */
+.detail-rays {
+  position: absolute; inset: -40%;
+  z-index: 0;
+  background: repeating-conic-gradient(from 0deg at 50% 50%,
+    rgb(var(--glow, 255 220 150) / 0.16) 0deg, transparent 8deg 22deg);
+  -webkit-mask: radial-gradient(circle at 50% 50%, #000 0%, transparent 64%);
+  mask: radial-gradient(circle at 50% 50%, #000 0%, transparent 64%);
+  animation: rayspin 24s linear infinite;
+}
+@keyframes rayspin { to { transform: rotate(360deg); } }
+
+/* Prev / next — float at the frame edges so the hero stays centered and
+   full-width regardless of screen size. */
+.detail-nav {
+  position: absolute; top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  font-size: 30px; line-height: 1; font-weight: 300;
+  color: var(--ink-2);
+  border-radius: 999px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.detail-nav--prev { left: 2px; }
+.detail-nav--next { right: 2px; }
+.detail-nav:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+/* Info panel */
+.detail-panel {
+  position: relative;
+  z-index: 2;
+  width: min(86%, 360px);
+  margin-top: 26px;
+  padding: 18px 20px calc(env(safe-area-inset-bottom, 0px) + 18px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.detail-titlerow {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.detail-name {
+  margin: 0;
+  font-family: var(--font-title);
+  font-weight: 900; font-size: 22px;
+  color: var(--ink-1);
+}
+.rarity-pill {
+  flex: 0 0 auto;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 5px 10px; border-radius: 999px;
+}
+.rarity-pill--common { color: var(--ink-2); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); }
+.rarity-pill--rare {
+  color: #2a1c00;
+  background: linear-gradient(180deg, var(--gold-deep), var(--gold));
+  box-shadow: 0 3px 12px var(--gold-glow);
+}
+
+.detail-facts {
+  margin: 16px 0 0;
+  display: flex; flex-direction: column;
+}
+.fact {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.fact dt { color: var(--ink-3); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.fact dd { margin: 0; color: var(--ink-1); font-weight: 500; }
+.hash-copy {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+.hash-copy .mono { font-family: var(--font-mono); font-size: 13px; }
+.copy-icon { font-size: 14px; opacity: 0.7; }
+
+/* ---------- Dev panel ---------- */
+.dev-panel {
+  position: fixed; bottom: 12px; left: 12px; z-index: 1000;
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 10px; max-width: 380px;
+  background: rgba(20, 24, 44, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  font-family: var(--font-ui);
+}
+.dev-panel-label {
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-3); padding: 0 6px;
+}
+.dev-panel-btn {
+  font-size: 11px; font-weight: 500;
+  color: rgba(230, 225, 250, 0.92);
+  padding: 6px 10px;
+  background: rgba(40, 30, 70, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 7px;
+}
+.dev-panel-btn:hover { background: rgba(60, 45, 100, 0.85); color: #fff; }
+.dev-panel-btn--reload { background: rgba(80, 30, 60, 0.6); color: rgba(255, 200, 220, 0.95); }
+
+@media (max-width: 600px), (pointer: coarse) and (max-height: 900px) {
+  .dev-panel {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); left: 8px;
+    padding: 10px 8px 6px; gap: 4px; max-width: calc(100vw - 16px);
+    background: rgba(20, 24, 44, 0.78);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .dev-panel-label { width: 100%; text-align: left; font-size: 9px; padding: 0 2px 2px; }
+  .dev-panel-btn { font-size: 10px; padding: 5px 7px; white-space: nowrap; }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .tile-art, .tile-bloom, .detail-rays, .detail-shimmer, .boot-mark, .empty-orb { animation: none !important; }
+}
+
+/* ---------- Wider frames (large phones / tablets): more columns ----------
+   Keyed off the gallery container (frame width), so the desktop preview at
+   phone width stays at 2 columns just like a real handset. */
+@container gallery (min-width: 460px) {
+  .gallery-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@container gallery (min-width: 680px) {
+  .gallery-grid { grid-template-columns: repeat(4, 1fr); }
+}

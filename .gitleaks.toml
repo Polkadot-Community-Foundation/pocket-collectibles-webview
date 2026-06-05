@@ -1,0 +1,18 @@
+# gitleaks configuration for collectibles-webview
+#
+# Extends the default gitleaks ruleset and allowlists one file: the catalogue
+# CID map. Its values are IPFS CIDv1 content identifiers (e.g.
+# "bafk2bzace...") — public, content-addressed hashes, NOT secrets. Their high
+# entropy trips gitleaks' generic-api-key rule, so they are allowlisted here.
+# Everything else is scanned normally.
+
+title = "collectibles-webview"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "IPFS CIDs in the catalogue map are public content addresses, not secrets"
+paths = [
+  '''src/collectibles/cid_map\.json''',
+]
