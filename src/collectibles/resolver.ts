@@ -2,7 +2,7 @@
 //
 // Ported from the CollectableHashResolver tool (~/git/CollectableHashResolver)
 // and the game-results webview's src/attestations/resolver.ts. Images are
-// uploaded to the Polkadot Bulletin Chain (Paseo testnet) and indexed by
+// uploaded to the Bulletin Chain (Summit network) and indexed by
 // CID in cid_map.json. The 32-byte NFT hash deterministically picks one
 // image from the catalog:
 //
@@ -21,9 +21,9 @@
 
 import cidMap from './cid_map.json'
 
-/** Paseo Bulletin Chain v2 IPFS gateway. CIDs expire on testnet
+/** Summit Bulletin Chain IPFS gateway. Bulletin storage expires
  *  (~2 weeks); when that happens, re-upload via the resolver tool. */
-const IPFS_GATEWAY = 'https://paseo-bulletin-next-ipfs.polkadot.io/ipfs'
+const IPFS_GATEWAY = 'https://summit-ipfs.polkadot.io/ipfs'
 
 /** Rarity threshold over a uint16 space (0..65535). 6554/65536 ≈ 10%
  *  chance of a rare roll. Matches RARE_THRESHOLD in the resolver tool. */
