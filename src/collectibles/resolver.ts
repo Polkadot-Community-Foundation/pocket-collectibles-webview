@@ -42,12 +42,31 @@ interface PoolEntry {
   collectionSize: number
 }
 
-/** Percentage drop-rate for a rarity, derived from RARE_THRESHOLD over the
- *  uint16 space. Rare ≈ 10%, common ≈ 90%. Used by the detail "Drop rate"
- *  fact. */
+/** True per-item drop rate as a percentage. A hash first rolls INTO a pool
+ *  (rare ≈ RARE_THRESHOLD/65536 ≈ 10%, common ≈ 90%), then picks uniformly
+ *  among that pool's entries — so the chance of any ONE specific item is the
+ *  pool-roll probability divided by the pool size, NOT the bare pool-roll
+ *  chance (which overstated rarity: every rare item showed "~10%" when its
+ *  real rate is ~10%/rarePoolSize). Pool sizes are read at call time, after
+ *  indexCatalogue() has run at module load. */
 export function dropRatePercent(rarity: Rarity): number {
-  const rare = Math.round((RARE_THRESHOLD / 65536) * 100)
-  return rarity === 'rare' ? rare : 100 - rare
+  const rarePoolProb = RARE_THRESHOLD / 65536
+  const poolProb = rarity === 'rare' ? rarePoolProb : 1 - rarePoolProb
+  const poolSize = rarity === 'rare' ? RARE_KEYS.length : NORMAL_KEYS.length
+  if (poolSize <= 0) return 0
+  return (poolProb / poolSize) * 100
+}
+
+/** Display label for the detail "Drop rate" fact. Per-item rates sit well
+ *  under 1%, so format with enough precision to stay meaningful rather than
+ *  rounding everything to "0%": "<0.1%" for the vanishingly rare, one decimal
+ *  below 10%, whole numbers above. */
+export function dropRateLabel(rarity: Rarity): string {
+  const pct = dropRatePercent(rarity)
+  if (pct <= 0) return '—'
+  if (pct < 0.1) return '<0.1%'
+  if (pct < 10) return `~${pct.toFixed(1)}%`
+  return `~${Math.round(pct)}%`
 }
 
 /** Title-case a separator-delimited fragment: "_"/"-" → spaces, collapse

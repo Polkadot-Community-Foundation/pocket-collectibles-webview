@@ -13,12 +13,11 @@ interface GalleryScreenProps {
    *  item's index so detail can swipe between items in display order, plus
    *  the on-screen art rect for the shared-element zoom. */
   onOpen: (list: CollectibleEntry[], index: number, artRect: DOMRect) => void
-  onReady: (count: number) => void
 }
 
 const SORT_MODES: SortMode[] = ['recent', 'rarity', 'name']
 
-export default function GalleryScreen({ entries, displayName, onOpen, onReady }: GalleryScreenProps) {
+export default function GalleryScreen({ entries, displayName, onOpen }: GalleryScreenProps) {
   const [sort, setSort] = useState<SortMode>('recent')
   const gridRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLDivElement>(null)
@@ -58,9 +57,9 @@ export default function GalleryScreen({ entries, displayName, onOpen, onReady }:
   // under StrictMode's setup→cleanup→setup double-invoke the second setup
   // must be free to rebuild it. A `didIntro` guard would let the first
   // setup build the timeline, the cleanup revert it, and the second setup
-  // bail — leaving the entrance (count-up included) reverted and never
-  // replayed. Empty deps also keep unstable onOpen/onReady identities from
-  // tearing down the animation mid-roll on an unrelated App re-render.
+  // bail — leaving the entrance reverted and never replayed. Empty deps also
+  // keep an unstable onOpen identity from tearing down the animation on an
+  // unrelated App re-render. (The owned-count roll is its own effect below.)
   useLayoutEffect(() => {
     const reduce = prefersReducedMotion()
 
@@ -85,19 +84,9 @@ export default function GalleryScreen({ entries, displayName, onOpen, onReady }:
           stagger: { amount: Math.min(0.6, tiles.length * 0.045), from: 'start', grid: 'auto' }
         }, '-=0.2')
       }
-      // Roll the owned count up from 0 for a satisfying tally.
-      const el = countRef.current
-      if (el) {
-        const target = entries.length
-        const obj = { n: 0 }
-        tl.to(obj, {
-          n: target, duration: 0.9, ease: 'power2.out',
-          onUpdate: () => { el.textContent = String(Math.round(obj.n)) }
-        }, 0.2)
-      }
+      // The owned-count roll lives in its own effect (below) so GSAP owns
+      // the count node outright — see the note there.
     }, headerRef)
-
-    onReady(entries.length)
 
     // Dev convenience: `?open=<n>` auto-opens the nth tile once the grid
     // has laid out, so the detail view can be shared / screenshotted via a
@@ -115,6 +104,34 @@ export default function GalleryScreen({ entries, displayName, onOpen, onReady }:
     return () => ctx.revert()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Owned-count roll. GSAP owns the count node OUTRIGHT — the span renders
+  // no React child (see JSX) so React never commits a number into the same
+  // text node GSAP is animating. Previously the span rendered
+  // `{entries.length}` while a tween wrote textContent toward a mount-time
+  // target: when items streamed in mid-roll, React committed the new number,
+  // GSAP overwrote it back toward the stale target, and — because React's
+  // vdom already held the live value — it never repaired the DOM, leaving the
+  // header permanently undercounting. Now the count rolls from whatever is
+  // currently shown to the LIVE count on mount and on every change.
+  const countTweenRef = useRef<gsap.core.Tween | null>(null)
+  useLayoutEffect(() => {
+    const el = countRef.current
+    if (!el) return
+    const target = entries.length
+    countTweenRef.current?.kill()
+    if (prefersReducedMotion()) {
+      el.textContent = String(target)
+      return
+    }
+    const shown = parseInt(el.textContent || '', 10)
+    const obj = { n: Number.isFinite(shown) ? shown : 0 }
+    countTweenRef.current = gsap.to(obj, {
+      n: target, duration: 0.6, ease: 'power2.out',
+      onUpdate: () => { el.textContent = String(Math.round(obj.n)) }
+    })
+    return () => { countTweenRef.current?.kill() }
+  }, [entries.length])
 
   // Reflow when the sort mode changes: a quick stagger so the new order
   // reads as a deliberate reshuffle rather than a hard cut.
@@ -142,7 +159,7 @@ export default function GalleryScreen({ entries, displayName, onOpen, onReady }:
           {displayName ?? 'your collection'}
         </h1>
         <div className="gallery-stats">
-          <span className="stat-count"><span ref={countRef}>{entries.length}</span> collectibles</span>
+          <span className="stat-count"><span ref={countRef} /> collectibles</span>
           {rareCount > 0 && (
             <>
               <span className="stat-dot">·</span>

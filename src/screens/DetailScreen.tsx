@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import gsap from 'gsap'
 import type { CollectibleEntry } from '../collectibles/format'
 import { formatMintDate } from '../collectibles/format'
-import { dropRatePercent } from '../collectibles/resolver'
+import { dropRateLabel } from '../collectibles/resolver'
 import { loadSwatch, getCachedSwatch, type Swatch } from '../collectibles/swatch'
 import { EASE, prefersReducedMotion } from '../anim/easings'
 import { haptic } from '../haptics/engine'
@@ -246,7 +246,7 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
           )}
           <div className="fact">
             <dt>Drop rate</dt>
-            <dd>~{dropRatePercent(entry.resolved.rarity)}%</dd>
+            <dd>{dropRateLabel(entry.resolved.rarity)}</dd>
           </div>
         </dl>
       </div>

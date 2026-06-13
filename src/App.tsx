@@ -54,10 +54,16 @@ export default function App() {
   const frameRef = useRef<HTMLDivElement>(null)
   const hasFiredReady = useRef(false)
   const reportedDropped = useRef(0)
+  const hasFiredGalleryShown = useRef(false)
+  const prevCollectionGen = useRef(collectionGen)
 
   // Resolve raw NFTs → display entries. Memoized so we only re-resolve when
   // the owned set actually changes.
   const entries = useMemo(() => items.map(buildEntry), [items])
+  // Always-current entries, so the deferred gallery_shown fire below reports
+  // the live count rather than a value captured when the effect first ran.
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
 
   // Subscribe to native collection deliveries (initial + late + streamed).
   useEffect(() => {
@@ -140,6 +146,33 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [delivered])
 
+  // flow.gallery_shown — fired once, the first time the populated gallery is
+  // shown. Deferred one frame so a burst of pushNft items arriving in the
+  // same tick as the first render is counted (the bridge coalesces notifies
+  // into a microtask; a frame lands safely after), and reports the LIVE count
+  // via entriesRef rather than a value captured at the gallery's mount —
+  // which undercounted while items were still streaming.
+  useEffect(() => {
+    if (hasFiredGalleryShown.current) return
+    if (!delivered || entries.length === 0) return
+    hasFiredGalleryShown.current = true
+    const id = requestAnimationFrame(() => {
+      sendFlowEvent({ type: 'flow.gallery_shown', count: entriesRef.current.length })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [delivered, entries.length])
+
+  // A wholesale setCollection (generation bump) replaces the gallery behind
+  // an open detail view; the detail holds a snapshot of the OLD list and
+  // would keep navigating now-stale/removed items. Close it on replace.
+  // Incremental pushNft never bumps the generation, so streaming updates
+  // don't dismiss an open detail.
+  useEffect(() => {
+    if (prevCollectionGen.current === collectionGen) return
+    prevCollectionGen.current = collectionGen
+    setSelection(null)
+  }, [collectionGen])
+
   function handleOpen(list: CollectibleEntry[], index: number, originRect: DOMRect): void {
     const entry = list[index]
     if (!entry) return
@@ -161,10 +194,6 @@ export default function App() {
     const cur = selection ? selection.list[selection.index] : null
     if (cur) sendFlowEvent({ type: 'flow.item_closed', hash: cur.hashHex })
     setSelection(null)
-  }
-
-  function handleGalleryReady(count: number): void {
-    sendFlowEvent({ type: 'flow.gallery_shown', count })
   }
 
   function handleShow(hash: string): void {
@@ -200,7 +229,6 @@ export default function App() {
             entries={entries}
             {...(displayName ? { displayName } : {})}
             onOpen={handleOpen}
-            onReady={handleGalleryReady}
           />
         )}
 
