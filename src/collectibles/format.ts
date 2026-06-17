@@ -2,7 +2,7 @@
 // renders, plus hash/date formatting and sorting.
 
 import type { OwnedNft } from '../bridge/types'
-import { resolveCollectible, type ResolvedCollectible } from './resolver'
+import { resolveCollectible, CATALOGUE_HAS_STICKERS, type ResolvedCollectible } from './resolver'
 
 /** A fully-resolved collectible ready for the UI. Each owned hash is unique,
  *  but distinct hashes often resolve to the SAME art — the gallery collapses
@@ -91,6 +91,52 @@ export function buildEntry(nft: OwnedNft): CollectibleEntry {
   }
   if (typeof nft.mintedAt === 'number') entry.mintedAt = nft.mintedAt
   return entry
+}
+
+/** Build all gallery entries from the owned set, applying the per-game sticker
+ *  guarantee.
+ *
+ *  We can't change how attestation hashes are minted, so we can't force a
+ *  sticker on-chain. Instead we deliver the guarantee at presentation time:
+ *  group the owned NFTs into mint batches (one game writes its NFTs with a
+ *  single `mintedAt`, per the bridge contract), and within any batch that has
+ *  NO organic sticker, promote the lexicographically-smallest-hash item to a
+ *  sticker. Items without a timestamp (pending candidates) form one batch.
+ *
+ *  The choice is a pure function of the batch's hashes, so the game-results
+ *  reveal makes the identical promotion over the same batch — the same hash
+ *  shows as the same sticker in both places. A small number of batches end up
+ *  with a *bonus* sticker (when an organic sticker also rolls), which is fine.
+ *
+ *  Note: this also retroactively guarantees a sticker for past games already
+ *  in the collection — the smallest-hash item of each older batch becomes a
+ *  sticker too, so "one sticker per game" holds across the whole Pocket. */
+export function buildEntries(nfts: OwnedNft[]): CollectibleEntry[] {
+  // Group by mint batch. `mintedAt` is the per-game grouping key; pending /
+  // timestamp-less items share a single 'pending' batch.
+  const batches = new Map<string, OwnedNft[]>()
+  for (const nft of nfts) {
+    const key = typeof nft.mintedAt === 'number' ? `t:${nft.mintedAt}` : 'pending'
+    const arr = batches.get(key)
+    if (arr) arr.push(nft)
+    else batches.set(key, [nft])
+  }
+
+  const out: CollectibleEntry[] = []
+  for (const group of batches.values()) {
+    const built = group.map(buildEntry)
+    if (CATALOGUE_HAS_STICKERS && !built.some((e) => e.resolved.isSticker)) {
+      // No organic sticker in this game — promote the smallest-hash item.
+      let pick = 0
+      for (let i = 1; i < built.length; i++) {
+        if (built[i]!.hash < built[pick]!.hash) pick = i
+      }
+      const target = built[pick]!
+      built[pick] = { ...target, resolved: resolveCollectible(target.hashHex, true) }
+    }
+    out.push(...built)
+  }
+  return out
 }
 
 /** Collapse entries that resolve to the same asset into one representative
