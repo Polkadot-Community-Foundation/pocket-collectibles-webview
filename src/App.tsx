@@ -3,6 +3,8 @@ import PhoneFrame from './components/PhoneFrame'
 import ParticleCanvas, { type ParticleCanvasApi } from './components/ParticleCanvas'
 import GalleryScreen, { EmptyGallery } from './screens/GalleryScreen'
 import DetailScreen from './screens/DetailScreen'
+import IntroOverlay from './components/IntroOverlay'
+import { hasSeenIntro, markIntroSeen } from './firstRun'
 import {
   readInitialCollection,
   subscribeCollection,
@@ -45,6 +47,9 @@ export default function App() {
   const [delivered, setDelivered] = useState<boolean>(hasDelivered())
   const [bootTimedOut, setBootTimedOut] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(null)
+  // First-run intro — shown once over the first populated gallery view.
+  const [showIntro, setShowIntro] = useState(false)
+  const introChecked = useRef(false)
   // Remount key for the gallery: bumps only on a wholesale setCollection
   // (new scenario / dev mock), so the entrance — count-up included —
   // replays. Incremental pushNft streaming leaves it untouched.
@@ -162,6 +167,21 @@ export default function App() {
     return () => cancelAnimationFrame(id)
   }, [delivered, entries.length])
 
+  // First-run intro: show once, the first time a populated gallery is
+  // available. Gated on localStorage (firstRun.ts); if storage is
+  // unavailable it simply reshows, which is harmless (skippable). Skipped
+  // entirely for an empty collection — there's nothing to introduce yet.
+  useEffect(() => {
+    if (introChecked.current) return
+    if (!delivered || entries.length === 0) return
+    introChecked.current = true
+    // QA override: `?intro=1` forces it, `?intro=0` suppresses it — otherwise
+    // it's the first-run localStorage gate.
+    const forced = new URLSearchParams(window.location.search).get('intro')
+    if (forced === '0') return
+    if (forced === '1' || !hasSeenIntro()) setShowIntro(true)
+  }, [delivered, entries.length])
+
   // A wholesale setCollection (generation bump) replaces the gallery behind
   // an open detail view; the detail holds a snapshot of the OLD list and
   // would keep navigating now-stale/removed items. Close it on replace.
@@ -244,6 +264,10 @@ export default function App() {
             onShow={handleShow}
           />
         )}
+
+        {showIntro && (
+          <IntroOverlay onDone={() => { markIntroSeen(); setShowIntro(false) }} />
+        )}
       </PhoneFrame>
 
       {isDevMode && (
@@ -259,6 +283,14 @@ export default function App() {
               {m.label}
             </button>
           ))}
+          <button
+            type="button"
+            className="dev-panel-btn"
+            onClick={() => setShowIntro(true)}
+            title="Replay the first-run intro (bypasses the localStorage gate)"
+          >
+            ↻ intro
+          </button>
           <button
             type="button"
             className="dev-panel-btn dev-panel-btn--reload"

@@ -159,11 +159,17 @@ export default function GalleryScreen({ entries, displayName, onOpen }: GalleryS
           {displayName ?? 'your collection'}
         </h1>
         <div className="gallery-stats">
-          <span className="stat-count"><span ref={countRef} /> collectibles</span>
+          {/* The rolling number is GSAP-driven and aria-hidden so assistive
+              tech isn't read a ticking count; an sr-only span carries the
+              real, stable value. */}
+          <span className="stat-count">
+            <span ref={countRef} aria-hidden="true" />
+            <span className="sr-only">{entries.length}</span> collectibles
+          </span>
           {rareCount > 0 && (
             <>
-              <span className="stat-dot">·</span>
-              <span className="stat-rare">✦ {rareCount} rare</span>
+              <span className="stat-dot" aria-hidden="true">·</span>
+              <span className="stat-rare"><span aria-hidden="true">✦ </span>{rareCount} rare</span>
             </>
           )}
         </div>
