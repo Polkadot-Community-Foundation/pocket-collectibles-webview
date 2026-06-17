@@ -443,8 +443,22 @@ button {
   margin-top: 2px;
   font-size: 11px; color: var(--ink-3);
 }
-.tile-code { font-family: var(--font-mono); letter-spacing: 0.02em; }
-.tile-when { color: var(--ink-2); }
+/* Collection name (e.g. "Animals") to the left of the relative mint time.
+   Truncates with an ellipsis so a long name never pushes the "1d ago" out. */
+.tile-collection {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-2);
+}
+/* Stickers swap the collection name for a bright "REDEEM ME" call-out
+   (Polkadot-pink, bold, with a soft glow so it pops on the dark tile). */
+.tile-collection--redeem {
+  color: #ff4db8;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 10px rgba(230, 0, 122, 0.6);
+}
+.tile-when { flex: none; color: var(--ink-2); }
 
 /* ---------- Empty state ---------- */
 .empty {
@@ -466,9 +480,23 @@ button {
      fills the viewport when the frame is flattened (embedded). */
   position: absolute; inset: 0;
   z-index: 100;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
 }
+/* Scrollable foreground: centers the hero + panel when they fit, and scrolls
+   from the top when they don't — so the panel's bottom "Send" button is always
+   reachable on short screens. The backdrop / close / counter stay OUTSIDE this
+   layer (direct children of .detail) so they never scroll away. */
+.detail-scroll {
+  position: absolute; inset: 0;
+  z-index: 2;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-start;
+  padding: 60px 0 calc(env(safe-area-inset-bottom, 0px) + 20px);
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.detail-scroll::before,
+.detail-scroll::after { content: ""; flex: 1 1 0; min-height: 0; }
 /* Backdrop tinted to the current item (`--glow` set on .detail), so the whole
    view takes on the item's colour rather than a fixed blue. */
 /* Backdrop tinted to the current item, as a tall vertical column of colour
@@ -690,6 +718,134 @@ button {
 .hash-copy .mono { font-family: var(--font-mono); font-size: 13px; }
 .copy-icon { font-size: 14px; opacity: 0.7; }
 
+/* Sticker redeem callout — only on sticker items. A large, prominent
+   Polkadot-pink panel telling the holder the physical perk. */
+.detail-sticker-redeem {
+  margin: 18px 0 0;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(230, 0, 122, 0.20), rgba(230, 0, 122, 0.10));
+  border: 1px solid rgba(255, 77, 184, 0.45);
+  color: #fff;
+  font-family: var(--font-title);
+  font-weight: 800;
+  font-size: 17px;
+  line-height: 1.32;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(230, 0, 122, 0.4);
+}
+
+/* "Send" action — always disabled for now. Muted, greyed treatment with a
+   message/send arrow icon so it reads as a real (but unavailable) action. */
+.detail-send {
+  margin: 18px 0 0;
+  width: 100%;
+  height: 50px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  border-radius: 14px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  opacity: 0.55;
+  cursor: default;
+}
+.detail-send svg { display: block; opacity: 0.85; }
+
+/* Active "Redeem" action on stickers — Polkadot-pink, matching the sticker
+   identity. Opens a confirmation before marking the sticker redeemed. */
+.detail-redeem {
+  margin: 18px 0 0;
+  width: 100%;
+  height: 50px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 14px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(180deg, #ff4db8, #e6007a);
+  box-shadow: 0 8px 24px rgba(230, 0, 122, 0.45);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.detail-redeem:active { transform: scale(0.97); }
+.detail-redeem:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Redeemed callout — once claimed, the bright pink prompt becomes a muted,
+   confirmed state. */
+.detail-sticker-redeem--done {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--line);
+  color: var(--ink-2);
+  text-shadow: none;
+}
+
+/* Redeem confirmation dialog (same shell as the InfoTip card). */
+.confirm-overlay {
+  position: absolute; inset: 0;
+  z-index: 200;
+  display: grid; place-items: center;
+  padding: 28px;
+  background: rgba(6, 5, 12, 0.66);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  animation: infotipFade 0.2s ease-out;
+}
+.confirm-card {
+  width: 100%; max-width: 300px;
+  padding: 20px;
+  text-align: left;
+  background: rgba(26, 24, 50, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  animation: infotipPop 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.confirm-title {
+  margin: 0 0 8px;
+  font-family: var(--font-title);
+  font-weight: 800; font-size: 16px;
+  color: var(--ink-1);
+}
+/* Prominent caution line — do NOT redeem until swag-stand staff say so. */
+.confirm-warn {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 196, 0, 0.12);
+  border: 1px solid rgba(255, 196, 0, 0.42);
+  color: #ffd98a;
+  font-size: 13.5px; font-weight: 800; line-height: 1.4;
+}
+.confirm-body { margin: 0 0 18px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.confirm-actions { display: flex; gap: 10px; }
+.confirm-cancel, .confirm-go {
+  flex: 1;
+  padding: 11px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.confirm-cancel {
+  color: var(--ink-1);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+}
+.confirm-go {
+  color: #fff;
+  border: 0;
+  background: linear-gradient(180deg, #ff4db8, #e6007a);
+  box-shadow: 0 6px 18px rgba(230, 0, 122, 0.45);
+}
+.confirm-cancel:active, .confirm-go:active { transform: scale(0.97); }
+.confirm-cancel:focus-visible, .confirm-go:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
 /* ---------- Dev panel ---------- */
 .dev-panel {
   position: fixed; bottom: 12px; left: 12px; z-index: 1000;
@@ -882,7 +1038,8 @@ button {
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .tile-art, .tile-bloom, .detail-rays, .detail-shimmer, .boot-mark, .empty-orb,
-  .intro-card, .infotip-overlay, .infotip-card { animation: none !important; }
+  .intro-card, .infotip-overlay, .infotip-card,
+  .confirm-overlay, .confirm-card { animation: none !important; }
 }
 
 /* ---------- Wider frames (large phones / tablets): more columns ----------

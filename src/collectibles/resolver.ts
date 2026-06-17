@@ -2,9 +2,9 @@
 //
 // Ported from the CollectableHashResolver tool (~/git/CollectableHashResolver)
 // and the game-results webview's src/attestations/resolver.ts. Images are
-// uploaded to the Bulletin Chain (Summit network) and indexed by
-// CID in cid_map.json. The 32-byte NFT hash deterministically picks one
-// image from the catalog:
+// uploaded to the Bulletin Chain and served via the Web3 Summit IPFS gateway,
+// indexed by CID in cid_map.json. The 32-byte NFT hash deterministically picks
+// one image from the catalog:
 //
 //   bytes 0-1 → rarity roll (uint16; if < RARE_THRESHOLD → rare pool)
 //   bytes 2-3 → image index (uint16; mod pool size → entry in the
@@ -253,6 +253,10 @@ const { normal: NORMAL_KEYS, rare: RARE_KEYS, sticker: STICKER_KEYS, place: COLL
 /** Total number of distinct images in the catalogue (normal + rare + sticker). */
 export const CATALOGUE_SIZE = NORMAL_KEYS.length + RARE_KEYS.length + STICKER_KEYS.length
 
+/** Whether the bundled catalogue actually contains any sticker items — lets
+ *  consumers skip the per-game sticker-guarantee work when there are none. */
+export const CATALOGUE_HAS_STICKERS = STICKER_KEYS.length > 0
+
 /** Lazily turn a catalogue key into a displayable PoolEntry, memoized so a
  *  repeated resolve (a popular image, a re-render, or the malformed-hash
  *  fallback) never rebuilds the URL/name. Only ever called for entries the
@@ -319,14 +323,24 @@ function uint16At(hex: string, byteOffset: number): number {
  *
  *  Accepts hex with or without a leading "0x", case-insensitive. On
  *  malformed input, falls back to the first available entry and logs a
- *  warning (one bad hash never empties the gallery). */
-export function resolveCollectible(hashHex: string): ResolvedCollectible {
+ *  warning (one bad hash never empties the gallery).
+ *
+ *  `forceSticker` overrides the rarity roll and resolves the hash into the
+ *  sticker pool (the hash's index bytes still pick WHICH sticker). It backs
+ *  the per-game sticker guarantee: a non-sticker hash can be presented as a
+ *  sticker without changing which hash the user owns. Resolution stays a pure
+ *  function of (hash, forceSticker), so the reveal and the Pocket agree
+ *  whenever they make the same promotion decision over the same game batch. */
+export function resolveCollectible(hashHex: string, forceSticker = false): ResolvedCollectible {
   const cleaned = (hashHex || '').trim()
   const hex = cleaned.startsWith('0x') || cleaned.startsWith('0X')
     ? cleaned.slice(2)
     : cleaned
 
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    if (forceSticker && STICKER_KEYS.length > 0) {
+      return { ...materialize(STICKER_KEYS[0]!), rarity: 'sticker', isRare: false, isSticker: true }
+    }
     const fallbackKey = NORMAL_KEYS[0] ?? RARE_KEYS[0] ?? STICKER_KEYS[0]
     if (!fallbackKey) throw new Error('cid_map is empty')
     console.warn(
@@ -340,11 +354,15 @@ export function resolveCollectible(hashHex: string): ResolvedCollectible {
   const pickVal = uint16At(hex, 2)
 
   // Bands checked low→high: sticker, then rare, then normal (see the
-  // STICKER_THRESHOLD / RARE_THRESHOLD comment). A pool that's empty is
-  // skipped so its band falls through to the next tier.
+  // STICKER_THRESHOLD / RARE_THRESHOLD comment). `forceSticker` short-circuits
+  // to the sticker pool. A pool that's empty is skipped so its band falls
+  // through to the next tier.
   let pool: string[]
   let rarity: Rarity
-  if (STICKER_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD) {
+  if (forceSticker && STICKER_KEYS.length > 0) {
+    pool = STICKER_KEYS
+    rarity = 'sticker'
+  } else if (STICKER_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD) {
     pool = STICKER_KEYS
     rarity = 'sticker'
   } else if (RARE_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD + RARE_THRESHOLD) {

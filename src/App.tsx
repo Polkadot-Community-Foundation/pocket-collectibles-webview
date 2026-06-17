@@ -14,7 +14,7 @@ import {
 } from './bridge/collection'
 import { sendFlowEvent } from './bridge/send'
 import type { CollectionInput, OwnedNft } from './bridge/types'
-import { buildEntry, type CollectibleEntry } from './collectibles/format'
+import { buildEntries, type CollectibleEntry } from './collectibles/format'
 import { DEV_MOCKS } from './devMocks'
 
 // If native never delivers a collection, fall back to the empty state
@@ -64,7 +64,7 @@ export default function App() {
 
   // Resolve raw NFTs → display entries. Memoized so we only re-resolve when
   // the owned set actually changes.
-  const entries = useMemo(() => items.map(buildEntry), [items])
+  const entries = useMemo(() => buildEntries(items), [items])
   // Always-current entries, so the deferred gallery_shown fire below reports
   // the live count rather than a value captured when the effect first ran.
   const entriesRef = useRef(entries)
