@@ -3,6 +3,8 @@ import PhoneFrame from './components/PhoneFrame'
 import ParticleCanvas, { type ParticleCanvasApi } from './components/ParticleCanvas'
 import GalleryScreen, { EmptyGallery } from './screens/GalleryScreen'
 import DetailScreen from './screens/DetailScreen'
+import IntroOverlay from './components/IntroOverlay'
+import { hasSeenIntro, markIntroSeen } from './firstRun'
 import {
   readInitialCollection,
   subscribeCollection,
@@ -45,6 +47,9 @@ export default function App() {
   const [delivered, setDelivered] = useState<boolean>(hasDelivered())
   const [bootTimedOut, setBootTimedOut] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(null)
+  // First-run intro — shown once over the first populated gallery view.
+  const [showIntro, setShowIntro] = useState(false)
+  const introChecked = useRef(false)
   // Remount key for the gallery: bumps only on a wholesale setCollection
   // (new scenario / dev mock), so the entrance — count-up included —
   // replays. Incremental pushNft streaming leaves it untouched.
@@ -54,10 +59,16 @@ export default function App() {
   const frameRef = useRef<HTMLDivElement>(null)
   const hasFiredReady = useRef(false)
   const reportedDropped = useRef(0)
+  const hasFiredGalleryShown = useRef(false)
+  const prevCollectionGen = useRef(collectionGen)
 
   // Resolve raw NFTs → display entries. Memoized so we only re-resolve when
   // the owned set actually changes.
   const entries = useMemo(() => items.map(buildEntry), [items])
+  // Always-current entries, so the deferred gallery_shown fire below reports
+  // the live count rather than a value captured when the effect first ran.
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
 
   // Subscribe to native collection deliveries (initial + late + streamed).
   useEffect(() => {
@@ -140,6 +151,48 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [delivered])
 
+  // flow.gallery_shown — fired once, the first time the populated gallery is
+  // shown. Deferred one frame so a burst of pushNft items arriving in the
+  // same tick as the first render is counted (the bridge coalesces notifies
+  // into a microtask; a frame lands safely after), and reports the LIVE count
+  // via entriesRef rather than a value captured at the gallery's mount —
+  // which undercounted while items were still streaming.
+  useEffect(() => {
+    if (hasFiredGalleryShown.current) return
+    if (!delivered || entries.length === 0) return
+    hasFiredGalleryShown.current = true
+    const id = requestAnimationFrame(() => {
+      sendFlowEvent({ type: 'flow.gallery_shown', count: entriesRef.current.length })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [delivered, entries.length])
+
+  // First-run intro: show once, the first time a populated gallery is
+  // available. Gated on localStorage (firstRun.ts); if storage is
+  // unavailable it simply reshows, which is harmless (skippable). Skipped
+  // entirely for an empty collection — there's nothing to introduce yet.
+  useEffect(() => {
+    if (introChecked.current) return
+    if (!delivered || entries.length === 0) return
+    introChecked.current = true
+    // QA override: `?intro=1` forces it, `?intro=0` suppresses it — otherwise
+    // it's the first-run localStorage gate.
+    const forced = new URLSearchParams(window.location.search).get('intro')
+    if (forced === '0') return
+    if (forced === '1' || !hasSeenIntro()) setShowIntro(true)
+  }, [delivered, entries.length])
+
+  // A wholesale setCollection (generation bump) replaces the gallery behind
+  // an open detail view; the detail holds a snapshot of the OLD list and
+  // would keep navigating now-stale/removed items. Close it on replace.
+  // Incremental pushNft never bumps the generation, so streaming updates
+  // don't dismiss an open detail.
+  useEffect(() => {
+    if (prevCollectionGen.current === collectionGen) return
+    prevCollectionGen.current = collectionGen
+    setSelection(null)
+  }, [collectionGen])
+
   function handleOpen(list: CollectibleEntry[], index: number, originRect: DOMRect): void {
     const entry = list[index]
     if (!entry) return
@@ -161,10 +214,6 @@ export default function App() {
     const cur = selection ? selection.list[selection.index] : null
     if (cur) sendFlowEvent({ type: 'flow.item_closed', hash: cur.hashHex })
     setSelection(null)
-  }
-
-  function handleGalleryReady(count: number): void {
-    sendFlowEvent({ type: 'flow.gallery_shown', count })
   }
 
   function handleShow(hash: string): void {
@@ -200,7 +249,6 @@ export default function App() {
             entries={entries}
             {...(displayName ? { displayName } : {})}
             onOpen={handleOpen}
-            onReady={handleGalleryReady}
           />
         )}
 
@@ -215,6 +263,10 @@ export default function App() {
             onClose={handleClose}
             onShow={handleShow}
           />
+        )}
+
+        {showIntro && (
+          <IntroOverlay onDone={() => { markIntroSeen(); setShowIntro(false) }} />
         )}
       </PhoneFrame>
 
@@ -231,6 +283,14 @@ export default function App() {
               {m.label}
             </button>
           ))}
+          <button
+            type="button"
+            className="dev-panel-btn"
+            onClick={() => setShowIntro(true)}
+            title="Replay the first-run intro (bypasses the localStorage gate)"
+          >
+            ↻ intro
+          </button>
           <button
             type="button"
             className="dev-panel-btn dev-panel-btn--reload"

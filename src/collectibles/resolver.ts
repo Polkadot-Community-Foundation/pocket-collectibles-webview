@@ -25,11 +25,26 @@ import cidMap from './cid_map.json'
  *  (~2 weeks); when that happens, re-upload via the resolver tool. */
 const IPFS_GATEWAY = 'https://summit-ipfs.polkadot.io/ipfs'
 
-/** Rarity threshold over a uint16 space (0..65535). 6554/65536 ≈ 10%
- *  chance of a rare roll. Matches RARE_THRESHOLD in the resolver tool. */
+// Rarity-roll bands over the uint16 space (0..65535), read from bytes 0-1 and
+// checked low→high:
+//   [0, STICKER_THRESHOLD)                              → sticker pool
+//   [STICKER_THRESHOLD, STICKER_THRESHOLD+RARE_BAND)    → rare pool
+//   else                                                 → normal pool
+// The "stickers" are the 14 Web3-Summit ("w3s") promo items — a special tier
+// of their own. The per-GAME guarantee ("always 1 sticker") is delivered by
+// the minting layer crafting one attestation hash per game whose rarity bytes
+// fall in [0, STICKER_THRESHOLD); the resolver only maps that band to the
+// sticker pool deterministically (so the reveal and the Pocket always agree on
+// the same on-chain hash). The band also gives any organic hash a small
+// (~STICKER_THRESHOLD/65536) chance of a bonus sticker.
+
+/** Sticker band width. ≈ 1311/65536 ≈ 2% organic sticker chance. */
+const STICKER_THRESHOLD = 1311
+/** Rare band width. 6554/65536 ≈ 10%. Matches RARE_THRESHOLD in the resolver
+ *  tool. */
 const RARE_THRESHOLD = 6554
 
-export type Rarity = 'common' | 'rare'
+export type Rarity = 'common' | 'rare' | 'sticker'
 
 interface PoolEntry {
   url: string
@@ -40,14 +55,48 @@ interface PoolEntry {
    *  collection's total size — drives the "No. X of Y" detail fact. */
   collectionIndex: number
   collectionSize: number
+  /** Per-item glow colour as an "R G B" string for `rgb(var(--glow) / a)`,
+   *  derived from the swatch hex embedded in the catalogue filename. */
+  glow: string
 }
 
-/** Percentage drop-rate for a rarity, derived from RARE_THRESHOLD over the
- *  uint16 space. Rare ≈ 10%, common ≈ 90%. Used by the detail "Drop rate"
- *  fact. */
+/** True per-item drop rate as a percentage. A hash first rolls INTO a pool
+ *  (sticker ≈ STICKER_THRESHOLD/65536 ≈ 2%, rare ≈ RARE_THRESHOLD/65536 ≈ 10%,
+ *  common ≈ the rest), then picks uniformly among that pool's entries — so the
+ *  chance of any ONE specific item is the pool-roll probability divided by the
+ *  pool size, NOT the bare pool-roll chance. Pool sizes are read at call time,
+ *  after indexCatalogue() has run at module load.
+ *
+ *  Note: this is the *organic* per-item rate. Stickers are additionally
+ *  guaranteed once per game by the minting layer, so a player's effective
+ *  sticker odds are higher than this band-only figure. */
 export function dropRatePercent(rarity: Rarity): number {
-  const rare = Math.round((RARE_THRESHOLD / 65536) * 100)
-  return rarity === 'rare' ? rare : 100 - rare
+  let bandProb: number
+  let poolSize: number
+  if (rarity === 'sticker') {
+    bandProb = STICKER_THRESHOLD / 65536
+    poolSize = STICKER_KEYS.length
+  } else if (rarity === 'rare') {
+    bandProb = RARE_THRESHOLD / 65536
+    poolSize = RARE_KEYS.length
+  } else {
+    bandProb = 1 - (STICKER_THRESHOLD + RARE_THRESHOLD) / 65536
+    poolSize = NORMAL_KEYS.length
+  }
+  if (poolSize <= 0) return 0
+  return (bandProb / poolSize) * 100
+}
+
+/** Display label for the detail "Drop rate" fact. Per-item rates sit well
+ *  under 1%, so format with enough precision to stay meaningful rather than
+ *  rounding everything to "0%": "<0.1%" for the vanishingly rare, one decimal
+ *  below 10%, whole numbers above. */
+export function dropRateLabel(rarity: Rarity): string {
+  const pct = dropRatePercent(rarity)
+  if (pct <= 0) return '—'
+  if (pct < 0.1) return '<0.1%'
+  if (pct < 10) return `~${pct.toFixed(1)}%`
+  return `~${Math.round(pct)}%`
 }
 
 /** Title-case a separator-delimited fragment: "_"/"-" → spaces, collapse
@@ -60,43 +109,107 @@ function titleCase(fragment: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** Split a catalogue filename into its collection (the first underscore
- *  segment after the numeric index) and the item's display name (everything
- *  after it). The 5-digit prefix and any standalone `rare` tag are dropped.
- *    "00001_Cocktail_Aperol_Spritz.png" → { collection: "Cocktail", name: "Aperol Spritz" }
- *    "00004_Cocktail_Bramble_rare.png"  → { collection: "Cocktail", name: "Bramble" }
- *    "00031_Fruit_Lingonberry.png"      → { collection: "Fruit",    name: "Lingonberry" }
- *  A single-segment filename (no collection prefix) keeps that segment as the
- *  name and leaves the collection empty. */
-function parseFilename(filename: string): { collection: string; name: string } {
-  const base = filename
-    .replace(/\.[a-z0-9]+$/i, '')        // drop extension
-    .replace(/^\d+[_-]/, '')              // drop leading 5-digit index
-  const segments = base.split('_').filter((s) => s && !/^rare$/i.test(s))
-  const collection = titleCase(segments[0] ?? '')
-  const name = titleCase(segments.slice(1).join(' '))
-  return name ? { collection, name } : { collection: '', name: collection }
+/** Fallback glow (a soft Polkadot-ish blue) for items with no/invalid hex,
+ *  expressed as the "R G B" string the `--glow` CSS var expects. */
+const DEFAULT_GLOW = '120 134 255'
+
+/** Lift a colour toward a clean "glow" — boost saturation a touch and force a
+ *  high value, since a glow is light rather than pigment. Mirrors the old
+ *  runtime swatch extractor's `vivify` so the baked-hex glow reads the same as
+ *  the per-pixel one it replaces; near-greyscale colours are left untinted. */
+function vivify(r: number, g: number, b: number): [number, number, number] {
+  const rn = r / 255, gn = g / 255, bn = b / 255
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn)
+  const d = max - min
+  const s = max === 0 ? 0 : d / max
+  let h = 0
+  if (d !== 0) {
+    if (max === rn) h = ((gn - bn) / d) % 6
+    else if (max === gn) h = (bn - rn) / d + 2
+    else h = (rn - gn) / d + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  const s2 = s > 0.18 ? Math.min(1, s * 1.35) : s
+  const v2 = Math.max(max, 0.92)
+  const c = v2 * s2
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = v2 - c
+  let rr = 0, gg = 0, bb = 0
+  if (h < 60) [rr, gg, bb] = [c, x, 0]
+  else if (h < 120) [rr, gg, bb] = [x, c, 0]
+  else if (h < 180) [rr, gg, bb] = [0, c, x]
+  else if (h < 240) [rr, gg, bb] = [0, x, c]
+  else if (h < 300) [rr, gg, bb] = [x, 0, c]
+  else [rr, gg, bb] = [c, 0, x]
+  return [Math.round((rr + m) * 255), Math.round((gg + m) * 255), Math.round((bb + m) * 255)]
 }
 
-/** Just the collection token of a filename (the first segment) — a lighter
- *  path than `parseFilename` for the load-time grouping pass, which only
- *  needs to bucket every catalogue key by collection. */
+/** Convert a 6-char hex colour ("8F5E4F") to the vivified "R G B" component
+ *  string used by `rgb(var(--glow) / a)`. Returns the fallback on malformed
+ *  input. */
+function hexToGlow(hex: string): string {
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return DEFAULT_GLOW
+  const n = parseInt(hex, 16)
+  const [r, g, b] = vivify((n >> 16) & 255, (n >> 8) & 255, n & 255)
+  return `${r} ${g} ${b}`
+}
+
+/** Split a catalogue filename into its collection, display name, and the
+ *  embedded swatch hex. The catalogue key format is
+ *    "INDEX--Category--name--tag--HEX.webp"
+ *  e.g. "00001--Stickers--agentic_human--w3s--8F5E4F.webp" →
+ *       { collection: "Stickers", name: "Agentic Human", hex: "8F5E4F" }
+ *       "00120--Animals--red_panda--Rare--C24A2F.webp"     →
+ *       { collection: "Animals",  name: "Red Panda",      hex: "C24A2F" }
+ *  The leading index, the rarity/tag segment (second-to-last), and the hex
+ *  (last) are all dropped from the name; underscores within the name become
+ *  spaces. A filename that doesn't fit the `--` shape falls back to treating
+ *  the whole basename as the name with no collection or hex. */
+function parseFilename(filename: string): { collection: string; name: string; hex: string } {
+  const base = filename.replace(/\.[a-z0-9]+$/i, '')   // drop extension
+  const parts = base.split('--')
+  if (parts.length < 4) {
+    return { collection: '', name: titleCase(base.replace(/^\d+[_-]/, '')), hex: '' }
+  }
+  const collection = titleCase(parts[1] ?? '')
+  const hexRaw = (parts[parts.length - 1] ?? '').trim()
+  const hex = /^[0-9a-fA-F]{6}$/.test(hexRaw) ? hexRaw : ''
+  // Name is everything between the category (index 1) and the trailing
+  // tag + hex (the last two segments).
+  const name = titleCase(parts.slice(2, parts.length - 2).join(' '))
+  return { collection, name: name || collection, hex }
+}
+
+/** Just the collection token of a filename (the second `--` segment, after
+ *  the numeric index) — a lighter path than `parseFilename` for the load-time
+ *  grouping pass, which only needs to bucket every catalogue key by
+ *  collection. */
 function collectionOf(filename: string): string {
-  const base = filename
-    .replace(/\.[a-z0-9]+$/i, '')
-    .replace(/^\d+[_-]/, '')
-  return titleCase(base.split('_')[0] ?? '')
+  const base = filename.replace(/\.[a-z0-9]+$/i, '')
+  const parts = base.split('--')
+  return titleCase(parts.length >= 2 ? parts[1]! : (parts[0] ?? ''))
+}
+
+/** True for the 14 special "sticker" items — identified by the catalogue
+ *  category segment being "Stickers" (equivalently the "w3s" tag). These are
+ *  pulled into their own pool, distinct from rare/normal. */
+function isStickerFilename(filename: string): boolean {
+  const base = filename.replace(/\.[a-z0-9]+$/i, '')
+  const parts = base.split('--')
+  return (parts[1] ?? '').toLowerCase() === 'stickers'
 }
 
 const MAP = cidMap as Record<string, string>
 
-/** Index the catalogue once at module load into two pools of *map keys*
- *  (lexicographically sorted, partitioned by the "rare" substring in the
- *  basename), skipping entries whose CID is missing/empty so the pool sizes
- *  match exactly. This does only the cheap classification — no URL strings,
- *  no display-name regexes, no per-entry objects — so the hash→image
- *  mapping stays byte-for-byte identical while the heavy materialization is
- *  deferred to `materialize()`.
+/** Index the catalogue once at module load into three pools of *map keys*
+ *  (lexicographically sorted): stickers (the "Stickers"/w3s category), rare
+ *  (filenames containing "rare"), and everything else (normal). Entries whose
+ *  CID is missing/empty are skipped so the pool sizes match exactly. This does
+ *  only the cheap classification — no URL strings, no display-name regexes, no
+ *  per-entry objects — so the hash→image mapping stays byte-for-byte identical
+ *  to the game-results resolver while the heavy materialization is deferred to
+ *  `materialize()`.
  *
  *  Why: the mapping needs the full ordered/classified catalogue (a hash
  *  picks `pickVal % pool.length` over the sorted pool, so dropping entries
@@ -108,17 +221,20 @@ const MAP = cidMap as Record<string, string>
 function indexCatalogue(): {
   normal: string[]
   rare: string[]
+  sticker: string[]
   place: Map<string, { index: number; size: number }>
 } {
   const normal: string[] = []
   const rare: string[] = []
+  const sticker: string[] = []
   // collection → its keys in sorted order, for "No. X of Y" placement.
   const byCollection = new Map<string, string[]>()
   for (const key of Object.keys(MAP).sort()) {
     const cid = MAP[key]
     if (typeof cid !== 'string' || !cid) continue
     const filename = key.replace(/\\/g, '/').split('/').pop() || key
-    if (filename.toLowerCase().includes('rare')) rare.push(key)
+    if (isStickerFilename(filename)) sticker.push(key)
+    else if (filename.toLowerCase().includes('rare')) rare.push(key)
     else normal.push(key)
     const collection = collectionOf(filename)
     const members = byCollection.get(collection)
@@ -129,13 +245,13 @@ function indexCatalogue(): {
   for (const members of byCollection.values()) {
     members.forEach((k, i) => place.set(k, { index: i + 1, size: members.length }))
   }
-  return { normal, rare, place }
+  return { normal, rare, sticker, place }
 }
 
-const { normal: NORMAL_KEYS, rare: RARE_KEYS, place: COLLECTION_PLACE } = indexCatalogue()
+const { normal: NORMAL_KEYS, rare: RARE_KEYS, sticker: STICKER_KEYS, place: COLLECTION_PLACE } = indexCatalogue()
 
-/** Total number of distinct images in the catalogue (normal + rare). */
-export const CATALOGUE_SIZE = NORMAL_KEYS.length + RARE_KEYS.length
+/** Total number of distinct images in the catalogue (normal + rare + sticker). */
+export const CATALOGUE_SIZE = NORMAL_KEYS.length + RARE_KEYS.length + STICKER_KEYS.length
 
 /** Lazily turn a catalogue key into a displayable PoolEntry, memoized so a
  *  repeated resolve (a popular image, a re-render, or the malformed-hash
@@ -146,7 +262,7 @@ function materialize(key: string): PoolEntry {
   let entry = entryCache.get(key)
   if (entry) return entry
   const filename = key.replace(/\\/g, '/').split('/').pop() || key
-  const { collection, name } = parseFilename(filename)
+  const { collection, name, hex } = parseFilename(filename)
   const place = COLLECTION_PLACE.get(key) ?? { index: 0, size: 0 }
   entry = {
     url: `${IPFS_GATEWAY}/${MAP[key]}`,
@@ -154,7 +270,8 @@ function materialize(key: string): PoolEntry {
     name,
     collection,
     collectionIndex: place.index,
-    collectionSize: place.size
+    collectionSize: place.size,
+    glow: hexToGlow(hex)
   }
   entryCache.set(key, entry)
   return entry
@@ -176,11 +293,17 @@ export interface ResolvedCollectible {
    *  the item's collection couldn't be placed. */
   collectionIndex: number
   collectionSize: number
-  /** Binary rarity derived from the hash (the catalogue has a normal pool
-   *  and a "rare" pool — there are no finer tiers). */
+  /** Tier derived from the hash's rarity roll: 'sticker' (the 14 special
+   *  Web3-Summit items), 'rare', or 'common'. */
   rarity: Rarity
   /** Convenience alias for `rarity === 'rare'`. */
   isRare: boolean
+  /** Convenience alias for `rarity === 'sticker'`. */
+  isSticker: boolean
+  /** Per-item glow colour as an "R G B" string (e.g. "143 94 79"), taken from
+   *  the swatch hex baked into the catalogue filename. Feeds the `--glow` CSS
+   *  var so each collectible's halo matches its dominant colour. */
+  glow: string
 }
 
 /** Parse a uint16 from two consecutive bytes at the given byte offset. */
@@ -204,22 +327,35 @@ export function resolveCollectible(hashHex: string): ResolvedCollectible {
     : cleaned
 
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-    const fallbackKey = NORMAL_KEYS[0] ?? RARE_KEYS[0]
+    const fallbackKey = NORMAL_KEYS[0] ?? RARE_KEYS[0] ?? STICKER_KEYS[0]
     if (!fallbackKey) throw new Error('cid_map is empty')
     console.warn(
       `[resolver] hash not 32-byte hex (got ${hex.length} chars), using fallback`,
       hashHex.slice(0, 16)
     )
-    return { ...materialize(fallbackKey), rarity: 'common', isRare: false }
+    return { ...materialize(fallbackKey), rarity: 'common', isRare: false, isSticker: false }
   }
 
   const rarityVal = uint16At(hex, 0)
   const pickVal = uint16At(hex, 2)
 
-  const useRare = RARE_KEYS.length > 0 && rarityVal < RARE_THRESHOLD
-  const pool = useRare ? RARE_KEYS : NORMAL_KEYS
+  // Bands checked low→high: sticker, then rare, then normal (see the
+  // STICKER_THRESHOLD / RARE_THRESHOLD comment). A pool that's empty is
+  // skipped so its band falls through to the next tier.
+  let pool: string[]
+  let rarity: Rarity
+  if (STICKER_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD) {
+    pool = STICKER_KEYS
+    rarity = 'sticker'
+  } else if (RARE_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD + RARE_THRESHOLD) {
+    pool = RARE_KEYS
+    rarity = 'rare'
+  } else {
+    pool = NORMAL_KEYS
+    rarity = 'common'
+  }
   if (pool.length === 0) throw new Error('collectible pools are empty')
 
   const entry = materialize(pool[pickVal % pool.length]!)
-  return { ...entry, rarity: useRare ? 'rare' : 'common', isRare: useRare }
+  return { ...entry, rarity, isRare: rarity === 'rare', isSticker: rarity === 'sticker' }
 }

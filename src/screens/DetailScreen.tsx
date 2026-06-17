@@ -2,8 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import gsap from 'gsap'
 import type { CollectibleEntry } from '../collectibles/format'
 import { formatMintDate } from '../collectibles/format'
-import { dropRatePercent } from '../collectibles/resolver'
-import { loadSwatch, getCachedSwatch, type Swatch } from '../collectibles/swatch'
+import { dropRateLabel } from '../collectibles/resolver'
+import { CONCEPTS } from '../collectibles/concepts'
+import InfoTip from '../components/InfoTip'
 import { EASE, prefersReducedMotion } from '../anim/easings'
 import { haptic } from '../haptics/engine'
 
@@ -24,17 +25,10 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
   const [index, setIndex] = useState(initialIndex)
   const entry = list[index]!
 
-  // Glow colour matched to the current item (seeded from cache if the gallery
-  // already extracted it; refined on image load). Drives the tinted backdrop,
-  // hero glow and rays via the `--glow` custom property on the root.
-  const [glow, setGlow] = useState<Swatch | null>(() => getCachedSwatch(entry.resolved.url))
-  useEffect(() => {
-    const url = entry.resolved.url
-    setGlow(getCachedSwatch(url))
-    let alive = true
-    loadSwatch(url).then((sw) => { if (alive && sw) setGlow(sw) })
-    return () => { alive = false }
-  }, [entry.resolved.url])
+  // Glow colour matched to the current item, taken from the swatch hex baked
+  // into its catalogue filename. Drives the tinted backdrop, hero glow and
+  // rays via the `--glow` custom property on the root.
+  const glow = entry.resolved.glow
 
   const rootRef = useRef<HTMLDivElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
@@ -157,9 +151,9 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
 
   return (
     <div
-      className={`detail${isRare ? ' detail--rare' : ''}`}
+      className={`detail${isRare ? ' detail--rare' : ''}${entry.resolved.isSticker ? ' detail--sticker' : ''}`}
       ref={rootRef}
-      style={{ '--glow': glow?.rgb ?? '120 134 255' } as React.CSSProperties}
+      style={{ '--glow': glow } as React.CSSProperties}
     >
       <div className="detail-backdrop" ref={backdropRef} onClick={close} />
 
@@ -219,7 +213,7 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
         <div className="detail-titlerow">
           <h2 className="detail-name">{entry.resolved.name}</h2>
           <span className={`rarity-pill rarity-pill--${entry.resolved.rarity}`}>
-            {isRare ? '✦ RARE' : 'COMMON'}
+            {entry.resolved.isSticker ? '★ STICKER' : isRare ? '✦ RARE' : 'COMMON'}
           </span>
         </div>
 
@@ -232,7 +226,13 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
           )}
           <div className="fact">
             <dt>Acquired</dt>
-            <dd>{entry.pending ? 'Pending finalisation' : formatMintDate(entry.mintedAt)}</dd>
+            <dd>
+              {entry.pending ? (
+                <>Pending finalisation <InfoTip title={CONCEPTS.pending.title} body={CONCEPTS.pending.body} label="What does pending mean?" /></>
+              ) : (
+                formatMintDate(entry.mintedAt)
+              )}
+            </dd>
           </div>
           <div className="fact">
             <dt>Collection</dt>
@@ -245,8 +245,8 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
             </div>
           )}
           <div className="fact">
-            <dt>Drop rate</dt>
-            <dd>~{dropRatePercent(entry.resolved.rarity)}%</dd>
+            <dt>Drop rate <InfoTip title={CONCEPTS.rarity.title} body={CONCEPTS.rarity.body} label="What does drop rate mean?" /></dt>
+            <dd>{dropRateLabel(entry.resolved.rarity)}</dd>
           </div>
         </dl>
       </div>
