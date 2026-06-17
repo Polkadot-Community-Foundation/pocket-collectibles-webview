@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import gsap from 'gsap'
 import type { CollectibleEntry } from '../collectibles/format'
 import { formatMintDate } from '../collectibles/format'
 import { dropRateLabel } from '../collectibles/resolver'
+import { isRedeemed, redeem, useRedeemedVersion } from '../collectibles/redeemed'
 import { CONCEPTS } from '../collectibles/concepts'
 import InfoTip from '../components/InfoTip'
 import { EASE, prefersReducedMotion } from '../anim/easings'
@@ -38,6 +40,25 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
   const closingRef = useRef(false)
 
   const isRare = entry.resolved.isRare
+  const isSticker = entry.resolved.isSticker
+  // Live redemption state for this collectible (local-only). Drives the
+  // Redeem/Redeemed button + callout.
+  useRedeemedVersion()
+  const redeemed = isSticker && isRedeemed(entry.hash)
+  // Redeem confirmation dialog.
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  // Esc closes the confirm dialog (capture phase so it pre-empts the detail's
+  // own Esc-to-close / arrow-nav handler while the dialog is open).
+  useEffect(() => {
+    if (!confirmOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmOpen(false)
+      e.stopPropagation()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [confirmOpen])
 
   // ── Mount: shared-element zoom from the tapped tile to the centered hero.
   useLayoutEffect(() => {
@@ -163,6 +184,7 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
         <span className="detail-counter">{index + 1} / {list.length}</span>
       )}
 
+      <div className="detail-scroll">
       <div className="detail-stage">
         {list.length > 1 && (
           <button type="button" className="detail-nav detail-nav--prev" onClick={() => navigate(-1)} aria-label="Previous">‹</button>
@@ -249,7 +271,87 @@ export default function DetailScreen({ list, index: initialIndex, originRect, on
             <dd>{dropRateLabel(entry.resolved.rarity)}</dd>
           </div>
         </dl>
+
+        {/* Stickers are the physical-redeemable tier: a real matching sticker
+            is waiting at the Web3 Summit swag stand. */}
+        {isSticker && (
+          <div className={`detail-sticker-redeem${redeemed ? ' detail-sticker-redeem--done' : ''}`}>
+            {redeemed
+              ? '✓ Redeemed — enjoy! Play more games to collect more stickers!'
+              : 'Redeem at the swag stand for a real matching sticker!'}
+          </div>
+        )}
+
+        {isSticker ? (
+          redeemed ? (
+            // Already redeemed — greyed, like the Send button's disabled look.
+            <button type="button" className="detail-send" disabled aria-disabled="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor">
+                <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z" />
+              </svg>
+              Redeemed
+            </button>
+          ) : (
+            // Active Redeem — opens a confirmation before marking it redeemed.
+            <button type="button" className="detail-redeem" onClick={() => setConfirmOpen(true)}>
+              Redeem
+            </button>
+          )
+        ) : (
+          // Send a collectible to a friend — not available yet, always disabled.
+          <button
+            type="button"
+            className="detail-send"
+            disabled
+            aria-disabled="true"
+            title="Sending isn't available yet"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor">
+              <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+            Send
+          </button>
+        )}
       </div>
+      </div>
+
+      {confirmOpen && createPortal(
+        <div
+          className="confirm-overlay"
+          role="presentation"
+          onClick={() => setConfirmOpen(false)}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div
+            className="confirm-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Redeem this sticker?"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="confirm-title">Redeem this sticker?</h3>
+            <p className="confirm-warn">
+              Only redeem when the person at the swag stand tells you to.
+            </p>
+            <p className="confirm-body">
+              Once you redeem it here, this sticker can no longer be redeemed at the swag stand.
+            </p>
+            <div className="confirm-actions">
+              <button type="button" className="confirm-cancel" onClick={() => setConfirmOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="confirm-go"
+                onClick={() => { redeem(entry.hash); setConfirmOpen(false) }}
+              >
+                Redeem
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.querySelector('.phone-frame') ?? document.body
+      )}
     </div>
   )
 }
