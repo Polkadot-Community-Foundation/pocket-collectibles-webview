@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { CollectibleEntry } from '../collectibles/format'
 import { formatRelative } from '../collectibles/format'
+import { isRedeemed, useRedeemedVersion } from '../collectibles/redeemed'
 import { haptic } from '../haptics/engine'
 
 interface CollectibleTileProps {
@@ -22,6 +23,10 @@ export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps)
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const { resolved, pending } = entry
+  // Subscribe to redemption changes so the sticker label flips live when the
+  // detail view redeems it.
+  useRedeemedVersion()
+  const stickerRedeemed = resolved.isSticker && isRedeemed(entry.hash)
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -103,7 +108,11 @@ export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps)
       <div className="tile-meta">
         <span className="tile-name">{resolved.name}</span>
         <span className="tile-sub">
-          <span className="tile-code">{entry.shortCode}</span>
+          <span className={`tile-collection${resolved.isSticker && !stickerRedeemed ? ' tile-collection--redeem' : ''}`}>
+            {resolved.isSticker
+              ? (stickerRedeemed ? 'REDEEMED' : 'REDEEM ME')
+              : (resolved.collection || entry.shortCode)}
+          </span>
           <span className="tile-dot">·</span>
           <span className="tile-when">{formatRelative(entry.mintedAt)}</span>
         </span>

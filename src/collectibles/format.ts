@@ -111,32 +111,48 @@ export function buildEntry(nft: OwnedNft): CollectibleEntry {
  *  Note: this also retroactively guarantees a sticker for past games already
  *  in the collection — the smallest-hash item of each older batch becomes a
  *  sticker too, so "one sticker per game" holds across the whole Pocket. */
-export function buildEntries(nfts: OwnedNft[]): CollectibleEntry[] {
-  // Group by mint batch. `mintedAt` is the per-game grouping key; pending /
-  // timestamp-less items share a single 'pending' batch.
-  const batches = new Map<string, OwnedNft[]>()
-  for (const nft of nfts) {
-    const key = typeof nft.mintedAt === 'number' ? `t:${nft.mintedAt}` : 'pending'
-    const arr = batches.get(key)
-    if (arr) arr.push(nft)
-    else batches.set(key, [nft])
-  }
+/** Max gap, in seconds, between two NFTs' mint times for them to count as the
+ *  same game. A game's NFTs are minted together (one block/extrinsic), so they
+ *  share a near-identical timestamp; distinct games are minutes+ apart. We
+ *  cluster within this window rather than requiring EXACTLY equal timestamps —
+ *  otherwise any per-NFT timestamp drift would split a game into singletons and
+ *  promote every item to a sticker. Comfortably larger than any intra-game mint
+ *  spread, and far smaller than the gap between two separately-played games. */
+const GAME_GAP_S = 90
 
-  const out: CollectibleEntry[] = []
-  for (const group of batches.values()) {
-    const built = group.map(buildEntry)
-    if (CATALOGUE_HAS_STICKERS && !built.some((e) => e.resolved.isSticker)) {
-      // No organic sticker in this game — promote the smallest-hash item.
-      let pick = 0
-      for (let i = 1; i < built.length; i++) {
-        if (built[i]!.hash < built[pick]!.hash) pick = i
-      }
-      const target = built[pick]!
-      built[pick] = { ...target, resolved: resolveCollectible(target.hashHex, true) }
-    }
-    out.push(...built)
+export function buildEntries(nfts: OwnedNft[]): CollectibleEntry[] {
+  const built = nfts.map(buildEntry)
+  if (!CATALOGUE_HAS_STICKERS || built.length === 0) return built
+
+  // Partition indices into game batches. Confirmed items cluster by mint time
+  // (gap ≤ GAME_GAP_S → same game); pending / timestamp-less items form one
+  // batch on their own.
+  const batches: number[][] = []
+  const confirmed = built
+    .map((e, i) => ({ i, t: e.mintedAt }))
+    .filter((x): x is { i: number; t: number } => typeof x.t === 'number')
+    .sort((a, b) => a.t - b.t)
+  let cur: number[] = []
+  let prevT: number | null = null
+  for (const { i, t } of confirmed) {
+    if (prevT !== null && t - prevT > GAME_GAP_S) { batches.push(cur); cur = [] }
+    cur.push(i)
+    prevT = t
   }
-  return out
+  if (cur.length > 0) batches.push(cur)
+  const pending = built.flatMap((e, i) => (typeof e.mintedAt === 'number' ? [] : [i]))
+  if (pending.length > 0) batches.push(pending)
+
+  // Per game, if no organic sticker, promote the smallest-hash item to its
+  // sticker image. (The same rule the reveal applies over the same hashes, so
+  // both agree on which item — and which sticker — the game grants.)
+  for (const batch of batches) {
+    if (batch.some((i) => built[i]!.resolved.isSticker)) continue
+    let pick = batch[0]!
+    for (const i of batch) if (built[i]!.hash < built[pick]!.hash) pick = i
+    built[pick] = { ...built[pick]!, resolved: resolveCollectible(built[pick]!.hashHex, true) }
+  }
+  return built
 }
 
 /** Collapse entries that resolve to the same asset into one representative
@@ -180,8 +196,12 @@ export function sortEntries(entries: CollectibleEntry[], mode: SortMode): Collec
         break
       }
       case 'rarity': {
-        // Rare first, then newest within a rarity band.
-        if (a.resolved.isRare !== b.resolved.isRare) return a.resolved.isRare ? -1 : 1
+        // Tier order: sticker (special) → rare → common; newest within a tier.
+        const tier = (e: CollectibleEntry) =>
+          e.resolved.isSticker ? 2 : e.resolved.isRare ? 1 : 0
+        const ta = tier(a)
+        const tb = tier(b)
+        if (ta !== tb) return tb - ta
         const am = a.mintedAt ?? 0
         const bm = b.mintedAt ?? 0
         if (am !== bm) return bm - am
