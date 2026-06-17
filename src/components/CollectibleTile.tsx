@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { CollectibleEntry } from '../collectibles/format'
 import { formatRelative } from '../collectibles/format'
-import { loadSwatch, getCachedSwatch, type Swatch } from '../collectibles/swatch'
 import { haptic } from '../haptics/engine'
 
 interface CollectibleTileProps {
@@ -15,14 +14,13 @@ interface CollectibleTileProps {
  *  animations are driven by the parent (GalleryScreen) via GSAP on the
  *  `.tile` element; the tile owns only its own image-load + press feel.
  *
- *  Each item floats on a colour-matched glow blob (extracted from its own
- *  pixels on load) plus a soft additive blurred copy BEHIND it for a
- *  camera-flare — no drop shadows and nothing painted over the art, per the
- *  mock-ups' ethereal "floating in space" look. */
+ *  Each item floats on a colour-matched glow blob (tinted by the swatch hex
+ *  baked into the catalogue filename) plus a soft additive blurred copy
+ *  BEHIND it for a camera-flare — no drop shadows and nothing painted over the
+ *  art, per the mock-ups' ethereal "floating in space" look. */
 export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps) {
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
-  const [glow, setGlow] = useState<Swatch | null>(() => getCachedSwatch(entry.resolved.url))
   const { resolved, pending } = entry
 
   const handleClick = useCallback(
@@ -36,18 +34,13 @@ export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps)
     [entry, onOpen]
   )
 
-  // When the (lazy) display image loads, extract the glow off-DOM via a
-  // separate crossOrigin image — so the displayed art never depends on CORS,
-  // and we only do the work for tiles actually scrolled into view (the
-  // off-DOM image hits the immutable cache for free).
   const onArtLoad = useCallback(() => {
     setLoaded(true)
-    loadSwatch(resolved.url).then((sw) => { if (sw) setGlow(sw) })
-  }, [resolved.url])
+  }, [])
 
-  // Tinted glow colour as a CSS custom property; defaults to a cool neutral
-  // until the swatch is extracted.
-  const glowStyle = { '--glow': glow?.rgb ?? '120 134 255' } as React.CSSProperties
+  // Tinted glow colour as a CSS custom property, taken from the swatch hex
+  // baked into the collectible's catalogue filename.
+  const glowStyle = { '--glow': resolved.glow } as React.CSSProperties
 
   return (
     <button
@@ -55,13 +48,13 @@ export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps)
       className={[
         'tile',
         resolved.isRare ? 'tile--rare' : '',
+        resolved.isSticker ? 'tile--sticker' : '',
         pending ? 'tile--pending' : '',
-        loaded ? 'is-loaded' : '',
-        glow?.vivid ? 'is-vivid' : ''
+        loaded ? 'is-loaded' : ''
       ].filter(Boolean).join(' ')}
       style={glowStyle}
       onClick={handleClick}
-      aria-label={`${resolved.name}${resolved.isRare ? ', rare' : ''}${entry.count && entry.count > 1 ? `, ${entry.count} owned` : ''}`}
+      aria-label={`${resolved.name}${resolved.isRare ? ', rare' : ''}${resolved.isSticker ? ', sticker' : ''}${entry.count && entry.count > 1 ? `, ${entry.count} owned` : ''}`}
     >
       <div className="tile-frame">
         {/* Colour-matched glow blob behind the item (brighter for rare). */}
@@ -100,6 +93,7 @@ export default function CollectibleTile({ entry, onOpen }: CollectibleTileProps)
             <div className="tile-art tile-art--fallback" aria-hidden="true">◈</div>
           )}
         </div>
+        {resolved.isSticker && <span className="tile-sticker-badge" aria-hidden="true">★ STICKER</span>}
         {resolved.isRare && <span className="tile-rare-badge" aria-hidden="true">✦ RARE</span>}
         {pending && <span className="tile-pending-badge">PENDING</span>}
         {entry.count && entry.count > 1 && (

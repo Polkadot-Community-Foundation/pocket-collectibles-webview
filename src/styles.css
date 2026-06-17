@@ -297,13 +297,11 @@ button {
 }
 .tile:active .tile-frame { transform: scale(0.96); }
 
-/* Colour-matched glow blob behind the item. `--glow` is set per item from its
-   own pixels (see swatch.ts); the blob is saturated under the item and fades
-   to the dark cell well before the edge, so the item floats. */
 /* Colour-matched glow behind the item. Vertically elongated (taller than
    wide) and faded to transparent BEFORE the top/bottom edges, so it reads as
    a soft vertical column of light and never hard-clips against the cell's
-   horizontal borders. `--glow` is set per item from its own pixels. */
+   horizontal borders. `--glow` is set per item from the swatch hex baked into
+   its catalogue filename (see resolver.ts). */
 .tile-glow-blob {
   position: absolute; inset: 0;
   background: radial-gradient(ellipse 50% 70% at 50% 48%,
@@ -382,6 +380,30 @@ button {
   color: #2a1c00;
   background: linear-gradient(180deg, var(--gold-deep), var(--gold));
   box-shadow: 0 2px 8px rgba(255, 202, 40, 0.4);
+}
+
+/* Stickers — the 14 special Web3-Summit items. Their own Polkadot-pink
+   identity, distinct from the gold "rare" tier: bright white-hot glow core,
+   the same gentle idle float as rares, and a pink badge. (A tile is never both
+   sticker and rare — they come from separate pools.) */
+.tile--sticker .tile-glow-blob {
+  background: radial-gradient(ellipse 52% 70% at 50% 48%,
+    rgb(255 255 255 / 0.42) 0%,
+    rgb(var(--glow) / 0.85) 15%,
+    rgb(var(--glow) / 0.45) 36%,
+    rgb(var(--glow) / 0.16) 52%,
+    transparent 66%);
+}
+.tile--sticker .tile-art,
+.tile--sticker .tile-bloom { animation: tileFloat 5s ease-in-out infinite; }
+.tile--sticker.is-loaded .tile-bloom { opacity: 0.5; }
+.tile-sticker-badge {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 3px 7px; border-radius: 7px;
+  color: #fff;
+  background: linear-gradient(180deg, #ff4db8, #e6007a);
+  box-shadow: 0 2px 8px rgba(230, 0, 122, 0.45);
 }
 .tile-pending-badge {
   position: absolute; top: 8px; right: 8px;
@@ -642,6 +664,11 @@ button {
   background: linear-gradient(180deg, var(--gold-deep), var(--gold));
   box-shadow: 0 3px 12px var(--gold-glow);
 }
+.rarity-pill--sticker {
+  color: #fff;
+  background: linear-gradient(180deg, #ff4db8, #e6007a);
+  box-shadow: 0 3px 12px rgba(230, 0, 122, 0.5);
+}
 
 .detail-facts {
   margin: 16px 0 0;
@@ -699,9 +726,163 @@ button {
   .dev-panel-btn { font-size: 10px; padding: 5px 7px; white-space: nowrap; }
 }
 
+/* ---------- Keyboard / switch focus ----------
+   The global `button` reset strips native focus styling and nothing replaced
+   it, so keyboard / switch-control users had no visible focus indicator.
+   :focus-visible (not :focus) keeps pointer taps ring-free. */
+.sort-chip:focus-visible,
+.detail-nav:focus-visible,
+.detail-close:focus-visible,
+.dev-panel-btn:focus-visible,
+.fatal-retry:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+/* Tiles ring the art square via box-shadow (the .tile outline would also
+   wrap the meta text below); box-shadow isn't clipped by the frame's
+   overflow:hidden since it paints outside the element's box. */
+.tile:focus-visible { outline: none; }
+.tile:focus-visible .tile-frame {
+  box-shadow: 0 0 0 3px var(--accent-bright), 0 0 20px var(--accent-glow);
+}
+
+/* Visually hidden but announced to assistive tech. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
+
+/* ---------- Info "?" affordance + explanation card ---------- */
+.infotip-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px;
+  margin-left: 6px;
+  border-radius: 50%;
+  font-family: var(--font-ui);
+  font-size: 10px; font-weight: 800; line-height: 1;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
+  vertical-align: text-bottom;
+}
+.infotip-trigger:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+
+/* Centered card + backdrop. Absolute inset:0 covers the nearest positioned
+   ancestor (the detail / frame), so it never escapes the phone-frame preview
+   and never clips on small screens. */
+.infotip-overlay {
+  position: absolute; inset: 0;
+  z-index: 200;
+  display: grid; place-items: center;
+  padding: 28px;
+  background: rgba(6, 5, 12, 0.66);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  animation: infotipFade 0.2s ease-out;
+}
+.infotip-card {
+  width: 100%; max-width: 300px;
+  padding: 20px;
+  text-align: left;
+  background: rgba(26, 24, 50, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  animation: infotipPop 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.infotip-title {
+  margin: 0 0 8px;
+  font-family: var(--font-title);
+  font-weight: 800; font-size: 16px;
+  color: var(--ink-1);
+}
+.infotip-body { margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.infotip-close {
+  width: 100%;
+  padding: 11px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+  box-shadow: 0 6px 18px var(--accent-glow);
+}
+.infotip-close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@keyframes infotipFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes infotipPop { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* ---------- First-run intro overlay ---------- */
+.intro-overlay {
+  position: absolute; inset: 0;
+  z-index: 300;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  /* Safe-area top + room for the absolute footer at the bottom. */
+  padding: max(48px, calc(env(safe-area-inset-top, 0px) + 36px)) 32px
+           calc(env(safe-area-inset-bottom, 0px) + 132px);
+  text-align: center;
+  background: var(--bg-radial);
+}
+.intro-skip {
+  position: absolute;
+  top: max(16px, calc(env(safe-area-inset-top, 0px) + 10px));
+  right: 16px;
+  padding: 8px 12px;
+  font-family: var(--font-ui);
+  font-size: 13px; font-weight: 600;
+  color: var(--ink-3);
+}
+.intro-skip:focus-visible, .intro-next:focus-visible {
+  outline: 2px solid var(--accent-bright); outline-offset: 2px;
+}
+.intro-card { max-width: 320px; animation: introCardIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.intro-art {
+  font-size: 56px;
+  color: var(--accent-bright);
+  text-shadow: 0 0 44px var(--accent-glow);
+  margin-bottom: 18px;
+}
+.intro-title {
+  margin: 0 0 12px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: clamp(24px, 7vw, 30px);
+  line-height: 1.1;
+  color: var(--ink-1);
+}
+.intro-body { margin: 0; font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+.intro-footer {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 32px);
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  padding: 0 32px;
+}
+.intro-dots { display: flex; gap: 7px; }
+.intro-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  transition: background 0.25s ease, transform 0.25s ease;
+}
+.intro-dot.is-active { background: var(--accent-bright); transform: scale(1.15); }
+.intro-next {
+  width: 100%; max-width: 320px;
+  padding: 14px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 14px; font-weight: 700; letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+@keyframes introCardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
-  .tile-art, .tile-bloom, .detail-rays, .detail-shimmer, .boot-mark, .empty-orb { animation: none !important; }
+  .tile-art, .tile-bloom, .detail-rays, .detail-shimmer, .boot-mark, .empty-orb,
+  .intro-card, .infotip-overlay, .infotip-card { animation: none !important; }
 }
 
 /* ---------- Wider frames (large phones / tablets): more columns ----------
