@@ -16,8 +16,8 @@ function randomHash(): string {
 }
 
 /** Set the rarity roll (bytes 0-1, big-endian uint16) on a fresh random hash
- *  so it lands in a chosen band. The resolver checks bands low→high: sticker
- *  [0, 1311), rare [1311, 7865), common otherwise (see resolver.ts). */
+ *  so it lands in a chosen band: rare [0, 7865), common otherwise (see
+ *  RARE_THRESHOLD in resolver.ts). */
 function hashWithRarityRoll(min: number, max: number): string {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
@@ -29,17 +29,9 @@ function hashWithRarityRoll(min: number, max: number): string {
   return h
 }
 
-/** A hash forced into the rare pool: rarity roll in [STICKER_THRESHOLD,
- *  STICKER_THRESHOLD + RARE_THRESHOLD) = [1311, 7865). (Previously this set the
- *  roll to ~0, which now lands in the sticker band — hence the explicit range.) */
+/** A hash forced into the rare pool: rarity roll in [0, RARE_THRESHOLD). */
 function rareHash(): string {
-  return hashWithRarityRoll(1311, 7865)
-}
-
-/** A hash forced into the sticker pool: rarity roll in [0, STICKER_THRESHOLD)
- *  = [0, 1311). These are the 14 special Web3-Summit stickers. */
-function stickerHash(): string {
-  return hashWithRarityRoll(0, 1311)
+  return hashWithRarityRoll(0, 7865)
 }
 
 /** `n` DISTINCT hashes that all resolve to the SAME asset: the resolver keys
@@ -65,13 +57,9 @@ function dupes(n: number): OwnedNft[] {
 const DAY = 86_400 // seconds
 
 /** Build `count` owned NFTs spread across recent "games" of ~10 items each.
- *
- *  CRITICAL: every item in a game shares ONE exact `mintedAt` (the on-chain
- *  per-game value). The gallery groups by mint time to apply the per-game
- *  sticker guarantee, so per-item timestamp jitter would split a game into
- *  singletons and promote EVERY item to a sticker. We don't inject stickers
- *  here — the gallery's own promotion adds exactly one per game, exercising the
- *  real guarantee path (mirrors production, where organic stickers are rare). */
+ *  Every item in a game shares ONE exact `mintedAt`, mirroring production —
+ *  a game's NFTs are minted together, so they carry the same on-chain
+ *  per-game timestamp (per the bridge contract). */
 function buildOwned(count: number, rareEvery: number = 7): OwnedNft[] {
   const now = Math.floor(Date.now() / 1000)
   const out: OwnedNft[] = []
@@ -81,16 +69,6 @@ function buildOwned(count: number, rareEvery: number = 7): OwnedNft[] {
     const isRare = rareEvery > 0 && i % rareEvery === rareEvery - 1
     out.push({ hash: isRare ? rareHash() : randomHash(), mintedAt })
   }
-  return out
-}
-
-/** One game (10 items at one timestamp) that already contains an organic
- *  sticker — exercises the "sticker present, skip promotion" path, so the game
- *  shows exactly one sticker without the gallery promoting a second. */
-function gameWithOrganicSticker(): OwnedNft[] {
-  const now = Math.floor(Date.now() / 1000)
-  const out: OwnedNft[] = [{ hash: stickerHash(), mintedAt: now }]
-  for (let i = 0; i < 9; i++) out.push({ hash: randomHash(), mintedAt: now })
   return out
 }
 
@@ -120,10 +98,6 @@ export const DEV_MOCKS: DevMock[] = [
   {
     label: 'rare-heavy (12)',
     build: () => ({ displayName: MOCK_NAME, owned: buildOwned(12, 2) })
-  },
-  {
-    label: 'organic sticker',
-    build: () => ({ displayName: MOCK_NAME, owned: gameWithOrganicSticker() })
   },
   {
     label: '+ pending',

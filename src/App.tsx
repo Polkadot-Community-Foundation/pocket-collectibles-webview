@@ -17,8 +17,11 @@ import type { CollectionInput, OwnedNft } from './bridge/types'
 import { buildEntries, type CollectibleEntry } from './collectibles/format'
 import { DEV_MOCKS } from './devMocks'
 
-// If native never delivers a collection, fall back to the empty state
-// after this long rather than spinning forever (offline / silent host).
+// If native never delivers a collection, stop waiting after this long rather
+// than spinning forever (offline / silent host). What shows then depends on
+// the last-known-good cache (bridge/collectionCache.ts): a cached collection
+// renders immediately — no boot screen at all — so this timeout only gates
+// the first-ever (or storage-blocked) boot, which falls to the empty state.
 const BOOT_TIMEOUT_MS = 8_000
 
 // Dev panel shows only with ?dev=1. Mirrors the game-results convention.
@@ -117,11 +120,17 @@ export default function App() {
     return () => { document.body.classList.remove('is-embedded') }
   }, [])
 
-  // Boot timeout — only relevant before any delivery.
+  // Boot timeout — only relevant before any delivery. The detail tells
+  // native whether the user was covered by the cached collection or left
+  // on the empty state.
   useEffect(() => {
     if (delivered) return
     const t = window.setTimeout(() => {
-      sendFlowEvent({ type: 'flow.error', phase: 'boot_timeout' })
+      sendFlowEvent({
+        type: 'flow.error',
+        phase: 'boot_timeout',
+        detail: entriesRef.current.length > 0 ? 'showing_cached' : 'no_cache'
+      })
       setBootTimedOut(true)
     }, BOOT_TIMEOUT_MS)
     return () => window.clearTimeout(t)
@@ -230,7 +239,9 @@ export default function App() {
     w.setCollection?.(build())
   }
 
-  const showBoot = !delivered && !bootTimedOut
+  // Boot screen only while there's nothing to show: cache-seeded entries
+  // render at once even though native hasn't spoken yet.
+  const showBoot = !delivered && !bootTimedOut && entries.length === 0
 
   return (
     <div className="page">

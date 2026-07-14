@@ -25,26 +25,20 @@ import cidMap from './cid_map.json'
  *  (~2 weeks); when that happens, re-upload via the resolver tool. */
 const IPFS_GATEWAY = 'https://summit-ipfs.polkadot.io/ipfs'
 
-// Rarity-roll bands over the uint16 space (0..65535), read from bytes 0-1 and
-// checked low→high:
-//   [0, STICKER_THRESHOLD)                              → sticker pool
-//   [STICKER_THRESHOLD, STICKER_THRESHOLD+RARE_BAND)    → rare pool
-//   else                                                 → normal pool
-// The "stickers" are the 14 Web3-Summit ("w3s") promo items — a special tier
-// of their own. The per-GAME guarantee ("always 1 sticker") is delivered by
-// the minting layer crafting one attestation hash per game whose rarity bytes
-// fall in [0, STICKER_THRESHOLD); the resolver only maps that band to the
-// sticker pool deterministically (so the reveal and the Pocket always agree on
-// the same on-chain hash). The band also gives any organic hash a small
-// (~STICKER_THRESHOLD/65536) chance of a bonus sticker.
+// Rarity-roll bands over the uint16 space (0..65535), read from bytes 0-1:
+//   [0, RARE_THRESHOLD) → rare pool
+//   else                → normal pool
 
-/** Sticker band width. ≈ 1311/65536 ≈ 2% organic sticker chance. */
-const STICKER_THRESHOLD = 1311
-/** Rare band width. 6554/65536 ≈ 10%. Matches RARE_THRESHOLD in the resolver
- *  tool. */
-const RARE_THRESHOLD = 6554
+/** Rare band width. 7865/65536 ≈ 12%. This is the historical sticker band
+ *  [0, 1311) plus the historical rare band [1311, 7865): the Web3 Summit
+ *  sticker tier was retired (see EVENT_EXCLUSIVES.md), and folding its band
+ *  into rare is what the previous band logic already did when the sticker pool
+ *  was empty — so every existing rare/common hash keeps its exact art, and
+ *  former sticker-band hashes resolve as rares. Do NOT change this value:
+ *  it would remap art on hashes users already own. */
+const RARE_THRESHOLD = 7865
 
-export type Rarity = 'common' | 'rare' | 'sticker'
+export type Rarity = 'common' | 'rare'
 
 interface PoolEntry {
   url: string
@@ -61,26 +55,19 @@ interface PoolEntry {
 }
 
 /** True per-item drop rate as a percentage. A hash first rolls INTO a pool
- *  (sticker ≈ STICKER_THRESHOLD/65536 ≈ 2%, rare ≈ RARE_THRESHOLD/65536 ≈ 10%,
- *  common ≈ the rest), then picks uniformly among that pool's entries — so the
- *  chance of any ONE specific item is the pool-roll probability divided by the
- *  pool size, NOT the bare pool-roll chance. Pool sizes are read at call time,
- *  after indexCatalogue() has run at module load.
- *
- *  Note: this is the *organic* per-item rate. Stickers are additionally
- *  guaranteed once per game by the minting layer, so a player's effective
- *  sticker odds are higher than this band-only figure. */
+ *  (rare ≈ RARE_THRESHOLD/65536 ≈ 12%, common ≈ the rest), then picks
+ *  uniformly among that pool's entries — so the chance of any ONE specific
+ *  item is the pool-roll probability divided by the pool size, NOT the bare
+ *  pool-roll chance. Pool sizes are read at call time, after indexCatalogue()
+ *  has run at module load. */
 export function dropRatePercent(rarity: Rarity): number {
   let bandProb: number
   let poolSize: number
-  if (rarity === 'sticker') {
-    bandProb = STICKER_THRESHOLD / 65536
-    poolSize = STICKER_KEYS.length
-  } else if (rarity === 'rare') {
+  if (rarity === 'rare') {
     bandProb = RARE_THRESHOLD / 65536
     poolSize = RARE_KEYS.length
   } else {
-    bandProb = 1 - (STICKER_THRESHOLD + RARE_THRESHOLD) / 65536
+    bandProb = 1 - RARE_THRESHOLD / 65536
     poolSize = NORMAL_KEYS.length
   }
   if (poolSize <= 0) return 0
@@ -158,10 +145,8 @@ function hexToGlow(hex: string): string {
 /** Split a catalogue filename into its collection, display name, and the
  *  embedded swatch hex. The catalogue key format is
  *    "INDEX--Category--name--tag--HEX.webp"
- *  e.g. "00001--Stickers--agentic_human--w3s--8F5E4F.webp" →
- *       { collection: "Stickers", name: "Agentic Human", hex: "8F5E4F" }
- *       "00120--Animals--red_panda--Rare--C24A2F.webp"     →
- *       { collection: "Animals",  name: "Red Panda",      hex: "C24A2F" }
+ *  e.g. "00120--Animals--red_panda--Rare--C24A2F.webp" →
+ *       { collection: "Animals", name: "Red Panda", hex: "C24A2F" }
  *  The leading index, the rarity/tag segment (second-to-last), and the hex
  *  (last) are all dropped from the name; underscores within the name become
  *  spaces. A filename that doesn't fit the `--` shape falls back to treating
@@ -191,25 +176,15 @@ function collectionOf(filename: string): string {
   return titleCase(parts.length >= 2 ? parts[1]! : (parts[0] ?? ''))
 }
 
-/** True for the 14 special "sticker" items — identified by the catalogue
- *  category segment being "Stickers" (equivalently the "w3s" tag). These are
- *  pulled into their own pool, distinct from rare/normal. */
-function isStickerFilename(filename: string): boolean {
-  const base = filename.replace(/\.[a-z0-9]+$/i, '')
-  const parts = base.split('--')
-  return (parts[1] ?? '').toLowerCase() === 'stickers'
-}
-
 const MAP = cidMap as Record<string, string>
 
-/** Index the catalogue once at module load into three pools of *map keys*
- *  (lexicographically sorted): stickers (the "Stickers"/w3s category), rare
- *  (filenames containing "rare"), and everything else (normal). Entries whose
- *  CID is missing/empty are skipped so the pool sizes match exactly. This does
- *  only the cheap classification — no URL strings, no display-name regexes, no
- *  per-entry objects — so the hash→image mapping stays byte-for-byte identical
- *  to the game-results resolver while the heavy materialization is deferred to
- *  `materialize()`.
+/** Index the catalogue once at module load into two pools of *map keys*
+ *  (lexicographically sorted): rare (filenames containing "rare") and
+ *  everything else (normal). Entries whose CID is missing/empty are skipped so
+ *  the pool sizes match exactly. This does only the cheap classification — no
+ *  URL strings, no display-name regexes, no per-entry objects — so the
+ *  hash→image mapping stays byte-for-byte identical to the game-results
+ *  resolver while the heavy materialization is deferred to `materialize()`.
  *
  *  Why: the mapping needs the full ordered/classified catalogue (a hash
  *  picks `pickVal % pool.length` over the sorted pool, so dropping entries
@@ -221,20 +196,17 @@ const MAP = cidMap as Record<string, string>
 function indexCatalogue(): {
   normal: string[]
   rare: string[]
-  sticker: string[]
   place: Map<string, { index: number; size: number }>
 } {
   const normal: string[] = []
   const rare: string[] = []
-  const sticker: string[] = []
   // collection → its keys in sorted order, for "No. X of Y" placement.
   const byCollection = new Map<string, string[]>()
   for (const key of Object.keys(MAP).sort()) {
     const cid = MAP[key]
     if (typeof cid !== 'string' || !cid) continue
     const filename = key.replace(/\\/g, '/').split('/').pop() || key
-    if (isStickerFilename(filename)) sticker.push(key)
-    else if (filename.toLowerCase().includes('rare')) rare.push(key)
+    if (filename.toLowerCase().includes('rare')) rare.push(key)
     else normal.push(key)
     const collection = collectionOf(filename)
     const members = byCollection.get(collection)
@@ -245,17 +217,13 @@ function indexCatalogue(): {
   for (const members of byCollection.values()) {
     members.forEach((k, i) => place.set(k, { index: i + 1, size: members.length }))
   }
-  return { normal, rare, sticker, place }
+  return { normal, rare, place }
 }
 
-const { normal: NORMAL_KEYS, rare: RARE_KEYS, sticker: STICKER_KEYS, place: COLLECTION_PLACE } = indexCatalogue()
+const { normal: NORMAL_KEYS, rare: RARE_KEYS, place: COLLECTION_PLACE } = indexCatalogue()
 
-/** Total number of distinct images in the catalogue (normal + rare + sticker). */
-export const CATALOGUE_SIZE = NORMAL_KEYS.length + RARE_KEYS.length + STICKER_KEYS.length
-
-/** Whether the bundled catalogue actually contains any sticker items — lets
- *  consumers skip the per-game sticker-guarantee work when there are none. */
-export const CATALOGUE_HAS_STICKERS = STICKER_KEYS.length > 0
+/** Total number of distinct images in the catalogue (normal + rare). */
+export const CATALOGUE_SIZE = NORMAL_KEYS.length + RARE_KEYS.length
 
 /** Lazily turn a catalogue key into a displayable PoolEntry, memoized so a
  *  repeated resolve (a popular image, a re-render, or the malformed-hash
@@ -297,13 +265,10 @@ export interface ResolvedCollectible {
    *  the item's collection couldn't be placed. */
   collectionIndex: number
   collectionSize: number
-  /** Tier derived from the hash's rarity roll: 'sticker' (the 14 special
-   *  Web3-Summit items), 'rare', or 'common'. */
+  /** Tier derived from the hash's rarity roll: 'rare' or 'common'. */
   rarity: Rarity
   /** Convenience alias for `rarity === 'rare'`. */
   isRare: boolean
-  /** Convenience alias for `rarity === 'sticker'`. */
-  isSticker: boolean
   /** Per-item glow colour as an "R G B" string (e.g. "143 94 79"), taken from
    *  the swatch hex baked into the catalogue filename. Feeds the `--glow` CSS
    *  var so each collectible's halo matches its dominant colour. */
@@ -323,49 +288,31 @@ function uint16At(hex: string, byteOffset: number): number {
  *
  *  Accepts hex with or without a leading "0x", case-insensitive. On
  *  malformed input, falls back to the first available entry and logs a
- *  warning (one bad hash never empties the gallery).
- *
- *  `forceSticker` overrides the rarity roll and resolves the hash into the
- *  sticker pool (the hash's index bytes still pick WHICH sticker). It backs
- *  the per-game sticker guarantee: a non-sticker hash can be presented as a
- *  sticker without changing which hash the user owns. Resolution stays a pure
- *  function of (hash, forceSticker), so the reveal and the Pocket agree
- *  whenever they make the same promotion decision over the same game batch. */
-export function resolveCollectible(hashHex: string, forceSticker = false): ResolvedCollectible {
+ *  warning (one bad hash never empties the gallery). */
+export function resolveCollectible(hashHex: string): ResolvedCollectible {
   const cleaned = (hashHex || '').trim()
   const hex = cleaned.startsWith('0x') || cleaned.startsWith('0X')
     ? cleaned.slice(2)
     : cleaned
 
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-    if (forceSticker && STICKER_KEYS.length > 0) {
-      return { ...materialize(STICKER_KEYS[0]!), rarity: 'sticker', isRare: false, isSticker: true }
-    }
-    const fallbackKey = NORMAL_KEYS[0] ?? RARE_KEYS[0] ?? STICKER_KEYS[0]
+    const fallbackKey = NORMAL_KEYS[0] ?? RARE_KEYS[0]
     if (!fallbackKey) throw new Error('cid_map is empty')
     console.warn(
       `[resolver] hash not 32-byte hex (got ${hex.length} chars), using fallback`,
       hashHex.slice(0, 16)
     )
-    return { ...materialize(fallbackKey), rarity: 'common', isRare: false, isSticker: false }
+    return { ...materialize(fallbackKey), rarity: 'common', isRare: false }
   }
 
   const rarityVal = uint16At(hex, 0)
   const pickVal = uint16At(hex, 2)
 
-  // Bands checked low→high: sticker, then rare, then normal (see the
-  // STICKER_THRESHOLD / RARE_THRESHOLD comment). `forceSticker` short-circuits
-  // to the sticker pool. A pool that's empty is skipped so its band falls
-  // through to the next tier.
+  // A pool that's empty falls through to the next tier so one lopsided
+  // catalogue never crashes resolution.
   let pool: string[]
   let rarity: Rarity
-  if (forceSticker && STICKER_KEYS.length > 0) {
-    pool = STICKER_KEYS
-    rarity = 'sticker'
-  } else if (STICKER_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD) {
-    pool = STICKER_KEYS
-    rarity = 'sticker'
-  } else if (RARE_KEYS.length > 0 && rarityVal < STICKER_THRESHOLD + RARE_THRESHOLD) {
+  if (RARE_KEYS.length > 0 && rarityVal < RARE_THRESHOLD) {
     pool = RARE_KEYS
     rarity = 'rare'
   } else {
@@ -375,5 +322,5 @@ export function resolveCollectible(hashHex: string, forceSticker = false): Resol
   if (pool.length === 0) throw new Error('collectible pools are empty')
 
   const entry = materialize(pool[pickVal % pool.length]!)
-  return { ...entry, rarity, isRare: rarity === 'rare', isSticker: rarity === 'sticker' }
+  return { ...entry, rarity, isRare: rarity === 'rare' }
 }
