@@ -2,7 +2,7 @@
 // renders, plus hash/date formatting and sorting.
 
 import type { OwnedNft } from '../bridge/types'
-import { resolveCollectible, CATALOGUE_HAS_STICKERS, type ResolvedCollectible } from './resolver'
+import { resolveCollectible, type ResolvedCollectible } from './resolver'
 
 /** A fully-resolved collectible ready for the UI. Each owned hash is unique,
  *  but distinct hashes often resolve to the SAME art — the gallery collapses
@@ -93,66 +93,9 @@ export function buildEntry(nft: OwnedNft): CollectibleEntry {
   return entry
 }
 
-/** Build all gallery entries from the owned set, applying the per-game sticker
- *  guarantee.
- *
- *  We can't change how attestation hashes are minted, so we can't force a
- *  sticker on-chain. Instead we deliver the guarantee at presentation time:
- *  group the owned NFTs into mint batches (one game writes its NFTs with a
- *  single `mintedAt`, per the bridge contract), and within any batch that has
- *  NO organic sticker, promote the lexicographically-smallest-hash item to a
- *  sticker. Items without a timestamp (pending candidates) form one batch.
- *
- *  The choice is a pure function of the batch's hashes, so the game-results
- *  reveal makes the identical promotion over the same batch — the same hash
- *  shows as the same sticker in both places. A small number of batches end up
- *  with a *bonus* sticker (when an organic sticker also rolls), which is fine.
- *
- *  Note: this also retroactively guarantees a sticker for past games already
- *  in the collection — the smallest-hash item of each older batch becomes a
- *  sticker too, so "one sticker per game" holds across the whole Pocket. */
-/** Max gap, in seconds, between two NFTs' mint times for them to count as the
- *  same game. A game's NFTs are minted together (one block/extrinsic), so they
- *  share a near-identical timestamp; distinct games are minutes+ apart. We
- *  cluster within this window rather than requiring EXACTLY equal timestamps —
- *  otherwise any per-NFT timestamp drift would split a game into singletons and
- *  promote every item to a sticker. Comfortably larger than any intra-game mint
- *  spread, and far smaller than the gap between two separately-played games. */
-const GAME_GAP_S = 90
-
+/** Build all gallery entries from the owned set. */
 export function buildEntries(nfts: OwnedNft[]): CollectibleEntry[] {
-  const built = nfts.map(buildEntry)
-  if (!CATALOGUE_HAS_STICKERS || built.length === 0) return built
-
-  // Partition indices into game batches. Confirmed items cluster by mint time
-  // (gap ≤ GAME_GAP_S → same game); pending / timestamp-less items form one
-  // batch on their own.
-  const batches: number[][] = []
-  const confirmed = built
-    .map((e, i) => ({ i, t: e.mintedAt }))
-    .filter((x): x is { i: number; t: number } => typeof x.t === 'number')
-    .sort((a, b) => a.t - b.t)
-  let cur: number[] = []
-  let prevT: number | null = null
-  for (const { i, t } of confirmed) {
-    if (prevT !== null && t - prevT > GAME_GAP_S) { batches.push(cur); cur = [] }
-    cur.push(i)
-    prevT = t
-  }
-  if (cur.length > 0) batches.push(cur)
-  const pending = built.flatMap((e, i) => (typeof e.mintedAt === 'number' ? [] : [i]))
-  if (pending.length > 0) batches.push(pending)
-
-  // Per game, if no organic sticker, promote the smallest-hash item to its
-  // sticker image. (The same rule the reveal applies over the same hashes, so
-  // both agree on which item — and which sticker — the game grants.)
-  for (const batch of batches) {
-    if (batch.some((i) => built[i]!.resolved.isSticker)) continue
-    let pick = batch[0]!
-    for (const i of batch) if (built[i]!.hash < built[pick]!.hash) pick = i
-    built[pick] = { ...built[pick]!, resolved: resolveCollectible(built[pick]!.hashHex, true) }
-  }
-  return built
+  return nfts.map(buildEntry)
 }
 
 /** Collapse entries that resolve to the same asset into one representative
@@ -196,11 +139,9 @@ export function sortEntries(entries: CollectibleEntry[], mode: SortMode): Collec
         break
       }
       case 'rarity': {
-        // Tier order: sticker (special) → rare → common; newest within a tier.
-        const tier = (e: CollectibleEntry) =>
-          e.resolved.isSticker ? 2 : e.resolved.isRare ? 1 : 0
-        const ta = tier(a)
-        const tb = tier(b)
+        // Rare above common; newest within a tier.
+        const ta = a.resolved.isRare ? 1 : 0
+        const tb = b.resolved.isRare ? 1 : 0
         if (ta !== tb) return tb - ta
         const am = a.mintedAt ?? 0
         const bm = b.mintedAt ?? 0
