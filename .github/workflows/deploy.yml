@@ -74,7 +74,7 @@ jobs:
     with:
       artifact-name: collectibles-webview-build
       dotns-domain: collectibles-webview.dot
-      env: paseo-next
+      env: devnet
       gateway: dot.li
       direct-signer: true
       publish: false
