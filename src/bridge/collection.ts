@@ -15,6 +15,7 @@
 // mounts without anything being dropped.
 
 import type { CollectionInput, OwnedNft } from './types'
+import { loadCachedCollection, saveCachedCollection } from './collectionCache'
 
 type Listener = (items: OwnedNft[]) => void
 
@@ -102,6 +103,10 @@ function coerceItem(raw: unknown): { key: string; item: OwnedNft } | null {
 
 function notify(): void {
   const snapshot = snapshotItems()
+  // Piggyback the last-known-good cache write on the coalesced notify, so a
+  // pushNft burst costs one localStorage write, not one per item. Only after
+  // a real native delivery — never write the cache-seeded data back to itself.
+  if (delivered) saveCachedCollection(snapshot, displayName)
   for (const cb of listeners) {
     try { cb(snapshot) } catch { /* a listener throwing can't break the channel */ }
   }
@@ -150,13 +155,17 @@ function ingestCollection(input: unknown): boolean {
     console.warn(`[collection] owned set exceeded ${MAX_OWNED}; dropped ${droppedCount} item(s)`)
   }
   if (typeof obj.displayName === 'string') {
-    // Strip HTML-sensitive chars (belt-and-braces; React escapes anyway) then
-    // truncate grapheme-safely so a 24th-char emoji isn't split mid-surrogate.
-    const cleaned = obj.displayName.trim().replace(/[<>"'&]/g, '')
-    const trimmed = Array.from(cleaned).slice(0, 24).join('')
-    displayName = trimmed || undefined
+    displayName = sanitizeDisplayName(obj.displayName)
   }
   return true
+}
+
+/** Sanitize a display name: strip HTML-sensitive chars (belt-and-braces;
+ *  React escapes anyway) then truncate grapheme-safely so a 24th-char emoji
+ *  isn't split mid-surrogate. Returns undefined for an empty result. */
+function sanitizeDisplayName(v: string): string | undefined {
+  const cleaned = v.trim().replace(/[<>"'&]/g, '')
+  return Array.from(cleaned).slice(0, 24).join('') || undefined
 }
 
 // ---- Globals registered at module load ----------------------------------
@@ -190,6 +199,30 @@ function ingestCollection(input: unknown): boolean {
       lastSignature = signatureOf()
     }
   } catch { /* ignore */ }
+})()
+
+// No native data yet (no __COLLECTION__): seed from the cached last-known
+// collection so an offline / slow boot renders the user's collection instead
+// of a spinner and then the empty state. Deliberately does NOT set
+// `delivered` — the boot is still waiting on native. A live setCollection
+// replaces this wholesale; seeding lastSignature means a same-content
+// delivery won't bump the generation (no pointless gallery remount). A
+// pushNft stream merges on top, which is safe because the owned set only
+// ever grows (mints are neither transferable nor burnable).
+;(function seedFromCache(): void {
+  if (delivered) return
+  const cached = loadCachedCollection()
+  if (!cached) return
+  for (const raw of cached.owned) {
+    const coerced = coerceItem(raw)
+    if (!coerced) continue
+    if (!store.has(coerced.key) && store.size >= MAX_OWNED) continue
+    store.set(coerced.key, coerced.item)
+  }
+  if (typeof cached.displayName === 'string') {
+    displayName = sanitizeDisplayName(cached.displayName)
+  }
+  lastSignature = signatureOf()
 })()
 
 /** Snapshot of the collection captured at module load (before React

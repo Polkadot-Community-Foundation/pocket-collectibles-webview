@@ -254,6 +254,9 @@ load bundle
    │
    ├─ window.__COLLECTION__ present?  ──► render gallery immediately
    │
+   ├─ else cached collection from a previous session? ──► render it immediately
+   │       (a later setCollection / pushNft replaces it live)
+   │
    ├─ else show "Opening your collection…" boot state
    │       │
    │       ├─ setCollection / pushNft arrives ──► render gallery
@@ -264,6 +267,12 @@ load bundle
 
 - Deliver as early as you can. Pre-setting `window.__COLLECTION__` gives the
   smoothest boot (no spinner). A late `setCollection` is fine too.
+- The webview persists the most recent delivered collection to WebView
+  localStorage and boots from it when native hasn't spoken yet — so an
+  offline or slow session shows the last-known set rather than "no
+  collectibles". Native should still deliver whenever it can; the cache is a
+  fallback, not a data source. `flow.error(boot_timeout)`'s `detail` reports
+  `showing_cached` or `no_cache` so hosts can tell the two apart.
 - `setCollection` / `pushNft` can be called repeatedly; the gallery updates
   live (e.g. a candidate promoted to confirmed, or streamed pages arriving).
 - There is no "done" / completion step — the catalogue is a browseable view,
@@ -277,8 +286,9 @@ For context only. The bundled `src/collectibles/cid_map.json` indexes the
 catalogue images (uploaded to the Bulletin Chain). For each hash the
 webview computes, deterministically:
 
-- bytes **0–1** (uint16) → rarity roll; `< 6554` (~10%) selects the **rare**
-  pool, else the normal pool.
+- bytes **0–1** (uint16) → rarity roll; `< 7865` (~12%) selects the **rare**
+  pool, else the normal pool. (7865 absorbs the retired Web3 Summit sticker
+  band — see EVENT_EXCLUSIVES.md; do not change it.)
 - bytes **2–3** (uint16) → image index, `mod poolSize`, into the
   lexicographically-sorted pool.
 
