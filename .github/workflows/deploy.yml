@@ -74,7 +74,7 @@ jobs:
       artifact-name: collectibles-webview-build
       dotns-domain: collectibles-webview.dot
       env: devnet
-      gateway: dot.li
+      gateway: dev-dot.li
       direct-signer: true
       publish: false
       skip-cache: true
