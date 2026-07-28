@@ -24,10 +24,13 @@ export default defineConfig({
   displayName: "Collectibles",
   description:
     "An animated gallery of the collectibles a user owns — every NFT resolved to its artwork in a swipeable, glowing collection, embedded as a native-app WebView.",
-  // NEEDS ICON FROM USER: the repo has no bundled image assets (collectible
-  // artwork is resolved from on-chain CIDs at runtime) — no square app icon.
-  // Drop a square PNG/JPEG at this path before the manifest-publish pass;
-  // publish fails loudly until it exists. Set `format` to match ("png"|"jpeg").
+  // PLACEHOLDER ICON: the repo bundles no image assets at all (collectible
+  // artwork is resolved from on-chain CIDs at runtime), so this is the shared
+  // devnet build icon — white tile, black Polkadot mark, DEV label — from the
+  // app icon design language. It unblocks manifest publish, which fails loudly
+  // without a readable file here. Replace with bespoke artwork when there is
+  // any. If this product is ever published to mainnet, swap in the unlabelled
+  // production variant — the DEV label would otherwise misreport the network.
   icon: { path: "./assets/icon.png", format: "png" },
   executables: [
     {
